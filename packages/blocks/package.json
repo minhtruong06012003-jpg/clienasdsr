@@ -1,0 +1,28 @@
+{
+  "name": "@cmsnt/blocks",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Thư viện block giao diện dùng chung cho Page Builder (admin) và frontend riêng của từng dự án",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./sanitize": "./src/sanitize.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cmsnt/shared": "workspace:*",
+    "dompurify": "^3.4.16",
+    "lucide-react": "^1.50.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19.2.0",
+    "typescript": "^6.0.2"
+  }
+}

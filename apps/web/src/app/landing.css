@@ -1,0 +1,282 @@
+/* ================= Trang chủ (landing): hiệu ứng "tương lai" =================
+   Tất cả class bắt đầu bằng lp- và chỉ dùng ở components/site/landing.tsx.
+   Màu lấy theo --foreground / --background nên tự đúng ở cả chế độ sáng lẫn tối.
+   Người dùng bật "giảm chuyển động" của hệ điều hành sẽ thấy bản tĩnh (cuối file). */
+
+/* ---------- Nền hero: sàn lưới phối cảnh trôi về phía người xem ---------- */
+@keyframes lp-grid-move {
+  to {
+    background-position: 0 64px;
+  }
+}
+.lp-grid-floor {
+  position: absolute;
+  inset: auto -50% -10% -50%;
+  height: 70%;
+  transform: perspective(520px) rotateX(62deg);
+  transform-origin: 50% 100%;
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--foreground) 14%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--foreground) 14%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px;
+  /* mờ dần về phía chân trời và hai bên */
+  mask-image: radial-gradient(70% 90% at 50% 100%, #000 30%, transparent 75%);
+  animation: lp-grid-move 3.5s linear infinite;
+}
+/* lưới phẳng mảnh phía sau tiêu đề */
+.lp-grid-flat {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--foreground) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--foreground) 6%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(60% 55% at 50% 30%, #000, transparent 75%);
+}
+
+/* ---------- Quầng sáng (aurora) trôi chậm ---------- */
+@keyframes lp-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(6%, -8%, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(-5%, 6%, 0) scale(0.95);
+  }
+}
+.lp-aurora {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  background: radial-gradient(circle, color-mix(in oklab, var(--foreground) 16%, transparent), transparent 70%);
+  animation: lp-drift 18s ease-in-out infinite;
+}
+.dark .lp-aurora {
+  background: radial-gradient(circle, rgb(255 255 255 / 0.13), transparent 70%);
+}
+
+/* ---------- Chữ ánh bạc: vệt sáng quét ngang qua tiêu đề ---------- */
+@keyframes lp-shine {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.lp-shine-text {
+  display: inline-block;
+  padding-block: 0.06em;
+  background-image: linear-gradient(
+    100deg,
+    var(--foreground) 0%,
+    var(--foreground) 40%,
+    color-mix(in oklab, var(--foreground) 35%, transparent) 50%,
+    var(--foreground) 60%,
+    var(--foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: lp-shine 6s linear infinite;
+}
+
+/* ---------- Xuất hiện khi tải trang (hero) và khi cuộn tới (các khối dưới) ---------- */
+@keyframes lp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+.lp-rise {
+  animation: lp-rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+/* data-reveal: ẩn sẵn, thêm .is-visible (IntersectionObserver trong landing.tsx) để hiện */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.8s ease,
+    transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+[data-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- Viền sáng chạy vòng (dùng chung --create-angle đã khai báo ở globals.css) ---------- */
+.lp-beam {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    conic-gradient(
+        from var(--create-angle),
+        color-mix(in oklab, var(--foreground) 10%, transparent) 0deg,
+        color-mix(in oklab, var(--foreground) 85%, transparent) 40deg,
+        color-mix(in oklab, var(--foreground) 10%, transparent) 90deg,
+        color-mix(in oklab, var(--foreground) 10%, transparent) 360deg
+      )
+      border-box;
+  animation: create-spin 6s linear infinite;
+}
+
+/* ---------- Khung AI Studio: tia quét khi "đang tạo", con trỏ nhấp nháy ---------- */
+@keyframes lp-scan {
+  from {
+    top: -30%;
+  }
+  to {
+    top: 100%;
+  }
+}
+.lp-scan::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 30%;
+  background: linear-gradient(to bottom, transparent, rgb(255 255 255 / 0.55), transparent);
+  mix-blend-mode: overlay;
+  animation: lp-scan 1.1s linear infinite;
+}
+@keyframes lp-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.lp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: lp-caret 1s steps(1) infinite;
+}
+/* thanh tiến trình chạy theo biến --p (0..1) */
+.lp-progress {
+  transform-origin: left;
+  transform: scaleX(var(--p, 0));
+  transition: transform 0.25s linear;
+}
+
+/* ---------- Dải chạy vô tận (tên model, thư viện tác phẩm) ---------- */
+@keyframes lp-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.lp-marquee {
+  display: flex;
+  width: max-content;
+  animation: lp-marquee var(--marquee-duration, 40s) linear infinite;
+}
+.lp-marquee-reverse {
+  animation-direction: reverse;
+}
+.lp-marquee-mask:hover .lp-marquee {
+  animation-play-state: paused;
+}
+.lp-marquee-mask {
+  mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+}
+
+/* ---------- Thẻ công cụ: đốm sáng theo vị trí chuột (--mx, --my do JS đặt) ---------- */
+.lp-spotlight {
+  position: relative;
+  isolation: isolate;
+}
+.lp-spotlight::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), color-mix(in oklab, var(--foreground) 9%, transparent), transparent 70%);
+}
+.lp-spotlight:hover::before {
+  opacity: 1;
+}
+
+/* ---------- Vòng quỹ đạo quay quanh (banner tiếp thị liên kết, bước sử dụng) ---------- */
+@keyframes lp-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.lp-orbit {
+  animation: lp-orbit var(--orbit-duration, 24s) linear infinite;
+}
+@keyframes lp-pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+.lp-pulse-ring {
+  animation: lp-pulse-ring 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+
+/* đường nối 3 bước: vệt sáng chạy dọc đường kẻ */
+@keyframes lp-flow {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+.lp-flow-line {
+  background:
+    linear-gradient(90deg, transparent, var(--foreground), transparent) no-repeat,
+    color-mix(in oklab, var(--foreground) 12%, transparent);
+  background-size: 30% 100%, 100% 100%;
+  animation: lp-flow 3s ease-in-out infinite;
+}
+
+/* lớp nhiễu hạt mịn phủ lên hero cho cảm giác "điện ảnh" */
+.lp-noise {
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* ---------- Giảm chuyển động: tắt hết animation, hiện sẵn nội dung ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .lp-grid-floor,
+  .lp-aurora,
+  .lp-shine-text,
+  .lp-rise,
+  .lp-beam,
+  .lp-scan::after,
+  .lp-caret,
+  .lp-marquee,
+  .lp-orbit,
+  .lp-pulse-ring,
+  .lp-flow-line {
+    animation: none;
+  }
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

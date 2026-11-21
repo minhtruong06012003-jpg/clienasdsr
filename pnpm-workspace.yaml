@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  sharp: true
+  argon2: true
+  prisma: true
+  "@prisma/engines": true
+  esbuild: true
+  unrs-resolver: true
+  "@nestjs/core": true
+  "@scarf/scarf": false
+
+minimumReleaseAgeExclude:
+  - lucide-react@1.50.0

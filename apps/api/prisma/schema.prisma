@@ -1,0 +1,2500 @@
+// CMSNT Panel - Database schema
+// Quy ước đa ngôn ngữ:
+//  - Nội dung chính (có slug/SEO) dùng bảng *Translation (1 dòng / 1 locale).
+//  - Nhãn nhỏ (menu, option, form label...) dùng JSON map { "vi": "...", "en": "..." }.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// Users, roles, auth
+// ============================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BANNED
+  PENDING
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String   @unique
+  description String?
+  /// Danh sách quyền, vd: ["pages.read","pages.write"] hoặc ["*"]
+  permissions String[]
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+
+  @@map("roles")
+}
+
+model User {
+  id            String          @id @default(uuid()) @db.Uuid
+  email         String          @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  avatarId      String?         @db.Uuid
+  avatar        Media?          @relation("UserAvatar", fields: [avatarId], references: [id], onDelete: SetNull)
+  bio           String?
+  status        UserStatus      @default(ACTIVE)
+  roleId        String          @db.Uuid
+  role          Role            @relation(fields: [roleId], references: [id])
+  locale        String?
+  meta          Json            @default("{}")
+  /// Giá trị trường tuỳ chỉnh { [fieldKey]: value } theo nhóm trường (modules/custom-fields)
+  customFields  Json            @default("{}")
+  emailVerified DateTime?
+  lastLoginAt   DateTime?
+  lastLoginIp   String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
+  refreshTokens RefreshToken[]
+  addresses     Address[]
+  orders        Order[]
+  pages         Page[]
+  posts         Post[]
+  entries       Entry[]
+  apiKeys       ApiKey[]
+  wishlist      WishlistItem[]
+  carts         Cart[]
+  media         Media[]         @relation("MediaUploader")
+  activities    ActivityLog[]
+  reviews       ProductReview[]
+  comments      Comment[]
+
+  twoFactorEnabled Boolean   @default(false)
+  twoFactorSecret  String?
+  recoveryCodes    String[]  @default([])
+  /// Bước thời gian (30s) của mã TOTP dùng gần nhất — chặn dùng lại cùng một mã
+  totpLastStep     Int?
+  failedLogins     Int       @default(0)
+  lockedUntil      DateTime?
+  /// Lý do admin khoá tạm thời (null = khoá tự động do đăng nhập sai nhiều lần hoặc không bị khoá)
+  lockReason       String?
+  /// Mã người dùng Google (đăng nhập bằng Google)
+  googleId         String?   @unique
+
+  /// Số dư ví (dùng mua hàng bằng số dư); luôn cập nhật kèm một dòng WalletTransaction
+  walletBalance      Decimal              @default(0) @db.Decimal(15, 2)
+  walletTransactions WalletTransaction[]  @relation("WalletOwner")
+  walletActions      WalletTransaction[]  @relation("WalletActor")
+  /// Thẻ cào thành viên đã gửi nạp vào ví (modules/card-topup)
+  cardTopups         CardTopup[]          @relation("CardTopupOwner")
+  /// Thẻ cào admin đã duyệt / từ chối thủ công
+  cardTopupReviews   CardTopup[]          @relation("CardTopupReviewer")
+  /// Giao dịch nạp ví qua cổng thanh toán
+  paymentTopups      PaymentTransaction[] @relation("PaymentTxnUser")
+
+  // ---- AI Studio (modules/ai) ----
+  /// Không dùng nữa (đã bỏ credits, chạy AI trừ thẳng số dư ví); migration gop_credits_vao_vi đã chuyển sang ví và đặt về 0
+  creditBalance   Int                 @default(0)
+  creditTxns      CreditTransaction[] @relation("CreditOwner")
+  creditActions   CreditTransaction[] @relation("CreditActor")
+  /// Thông báo bảng tin do tài khoản quản trị này viết
+  announcements   Announcement[]      @relation("AnnouncementAuthor")
+  /// Gói cước đang dùng (quyết định số luồng chạy đồng thời) và hạn của gói
+  planId          String?             @db.Uuid
+  plan            CreditPlan?         @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planExpiresAt   DateTime?
+  creditPurchases CreditPurchase[]
+  aiTasks         AiTask[]
+  /// Tổng tiền đã chi mua gói (VND) — thống kê cho admin
+  totalSpent      Decimal             @default(0) @db.Decimal(15, 2)
+  /// Giảm giá (%) riêng admin đặt cho khách (lấy mức lớn hơn so với chiết khấu nâng cấp gói)
+  customDiscount  Decimal             @default(0) @db.Decimal(5, 2)
+
+  // ---- Bot Telegram báo khách (modules/telegram) ----
+  /// Chat Telegram đã liên kết (khách bấm link /start từ trang Tài khoản); null = chưa liên kết
+  telegramChatId   String?   @unique
+  telegramUsername String?
+  telegramLinkedAt DateTime?
+  /// Loại thông báo khách tắt { taskSucceeded: false, ... } — không có khoá = đang bật
+  telegramPrefs    Json      @default("{}")
+
+  // ---- Tiếp thị liên kết (modules/affiliate) ----
+  /// Mã giới thiệu (duy nhất) và người đã giới thiệu tài khoản này
+  referralCode       String?                @unique
+  referredById       String?                @db.Uuid
+  referredBy         User?                  @relation("Referral", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals          User[]                 @relation("Referral")
+  /// Ví hoa hồng giới thiệu (tách khỏi walletBalance): hoa hồng cộng vào đây, khách gửi yêu cầu rút về ví / ngân hàng
+  affiliateBalance   Decimal                @default(0) @db.Decimal(15, 2)
+  affiliateTxns      AffiliateTransaction[] @relation("AffiliateOwner")
+  affiliateSourced   AffiliateTransaction[] @relation("AffiliateSource")
+  affiliateActions   AffiliateTransaction[] @relation("AffiliateActor")
+  affiliatePayouts   AffiliatePayout[]      @relation("AffiliatePayoutOwner")
+  affiliateProcessed AffiliatePayout[]      @relation("AffiliatePayoutActor")
+
+  @@index([roleId])
+  @@index([status])
+  @@index([referredById])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  /// Thời điểm token bị thu hồi do xoay vòng (refresh) — phân biệt với đăng xuất/thu hồi phiên
+  rotatedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  /// Lần dùng gần nhất (hiển thị "hoạt động lúc" trong danh sách phiên)
+  lastUsedAt DateTime?
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Nhật ký mỗi lượt đăng nhập (thành công / thất bại) — Trung tâm bảo mật, chống dò mật khẩu theo IP, phát hiện thiết bị lạ
+model LoginAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  /// email người dùng nhập (đã chuẩn hoá chữ thường)
+  email     String
+  /// tài khoản khớp email (null khi email không tồn tại)
+  userId    String?  @db.Uuid
+  ip        String?
+  userAgent String?
+  success   Boolean
+  /// lý do thất bại: password | 2fa | locked | ip_blocked | ip_not_allowed | not_admin | inactive | pending
+  reason    String?
+  /// admin = trang quản trị, site = website
+  area      String   @default("site")
+  /// password | totp | recovery (khi thành công)
+  method    String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([ip, createdAt])
+  @@index([email, createdAt])
+  @@index([userId, createdAt])
+  @@map("login_attempts")
+}
+
+/// Quy tắc IP: chặn truy cập (block) hoặc danh sách IP được vào trang quản trị (allow_admin)
+model IpRule {
+  id          String    @id @default(uuid()) @db.Uuid
+  /// block | allow_admin
+  type        String
+  /// IP đơn hoặc dải CIDR (IPv4 / IPv6), đã chuẩn hoá
+  value       String
+  note        String?
+  /// manual = quản trị viên thêm, auto = hệ thống tự chặn do đăng nhập sai nhiều lần
+  source      String    @default("manual")
+  /// hết hạn thì quy tắc không còn tác dụng (null = vĩnh viễn)
+  expiresAt   DateTime?
+  createdById String?   @db.Uuid
+  /// số lần quy tắc chặn được request (cập nhật gộp, gần đúng)
+  hits        Int       @default(0)
+  lastHitAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([type, value])
+  @@index([type])
+  @@map("ip_rules")
+}
+
+model PasswordReset {
+  id        String    @id @default(uuid()) @db.Uuid
+  email     String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+  @@map("password_resets")
+}
+
+model Address {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  phone        String
+  line1        String
+  line2        String?
+  ward         String?
+  district     String?
+  city         String?
+  /// mã tỉnh ISO "VN-HN" + mã quận/phường trong danh mục vận chuyển (ShippingLocation.code)
+  province     String?
+  districtCode String?
+  wardCode     String?
+  country      String   @default("VN")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   String?
+  meta       Json     @default("{}")
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+// ============================================================
+// Languages & settings
+// ============================================================
+
+model Language {
+  code       String   @id // vi, en, ja...
+  name       String
+  nativeName String?
+  flag       String?
+  isDefault  Boolean  @default(false)
+  enabled    Boolean  @default(true)
+  direction  String   @default("ltr")
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("languages")
+}
+
+model Setting {
+  key       String   @id // vd: general, seo, contact, commerce...
+  value     Json     @default("{}")
+  /// public = trả về cho storefront qua API public
+  isPublic  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// ============================================================
+// Media
+// ============================================================
+
+model MediaFolder {
+  id        String        @id @default(uuid()) @db.Uuid
+  name      String
+  parentId  String?       @db.Uuid
+  parent    MediaFolder?  @relation("FolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  MediaFolder[] @relation("FolderTree")
+  media     Media[]
+  createdAt DateTime      @default(now())
+
+  @@index([parentId])
+  @@map("media_folders")
+}
+
+model Media {
+  id           String       @id @default(uuid()) @db.Uuid
+  filename     String
+  originalName String
+  path         String // đường dẫn tương đối trong storage, vd 2026/10/abc.jpg
+  mimeType     String
+  size         Int
+  width        Int?
+  height       Int?
+  /// { thumb: "2026/10/abc-thumb.webp", medium: ..., large: ... }
+  variants     Json         @default("{}")
+  /// alt theo ngôn ngữ { vi: "...", en: "..." }
+  alt          Json         @default("{}")
+  caption      Json         @default("{}")
+  folderId     String?      @db.Uuid
+  folder       MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  uploaderId   String?      @db.Uuid
+  uploader     User?        @relation("MediaUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
+  storage      String       @default("local")
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  /// Thùng rác: file vẫn còn trên đĩa cho tới khi xoá vĩnh viễn
+  deletedAt    DateTime?
+  avatarOf     User[]       @relation("UserAvatar")
+
+  @@index([folderId])
+  @@index([mimeType])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("media")
+}
+
+// ============================================================
+// Content: pages, posts, taxonomy
+// ============================================================
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  SCHEDULED
+  ARCHIVED
+}
+
+model Page {
+  id              String            @id @default(uuid()) @db.Uuid
+  status          ContentStatus     @default(DRAFT)
+  template        String            @default("default")
+  parentId        String?           @db.Uuid
+  parent          Page?             @relation("PageTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children        Page[]            @relation("PageTree")
+  authorId        String?           @db.Uuid
+  author          User?             @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  featuredImageId String?           @db.Uuid
+  sortOrder       Int               @default(0)
+  /// Giá trị trường tuỳ chỉnh { [fieldKey]: value } (modules/custom-fields)
+  customFields    Json              @default("{}")
+  publishedAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+  translations    PageTranslation[]
+  revisions       PageRevision[]
+
+  @@index([status])
+  @@map("pages")
+}
+
+model PageTranslation {
+  id             String  @id @default(uuid()) @db.Uuid
+  pageId         String  @db.Uuid
+  page           Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  locale         String
+  title          String
+  slug           String
+  excerpt        String?
+  /// Mảng block của page builder: [{ id, type, data, settings }]
+  blocks         Json    @default("[]")
+  seoTitle       String?
+  seoDescription String?
+  seoKeywords    String?
+  canonicalUrl   String?
+  ogImageId      String? @db.Uuid
+  noindex        Boolean @default(false)
+  nofollow       Boolean @default(false)
+  /// JSON-LD tuỳ chỉnh
+  schemaJson     Json?
+
+  @@unique([pageId, locale])
+  @@unique([locale, slug])
+  @@map("page_translations")
+}
+
+model PageRevision {
+  id        String   @id @default(uuid()) @db.Uuid
+  pageId    String   @db.Uuid
+  page      Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  locale    String
+  title     String
+  blocks    Json
+  authorId  String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([pageId, locale])
+  @@map("page_revisions")
+}
+
+model Post {
+  id              String               @id @default(uuid()) @db.Uuid
+  status          ContentStatus        @default(DRAFT)
+  authorId        String?              @db.Uuid
+  author          User?                @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  featuredImageId String?              @db.Uuid
+  isFeatured      Boolean              @default(false)
+  allowComments   Boolean              @default(true)
+  /// Số bình luận đã duyệt (cache)
+  commentCount    Int                  @default(0)
+  viewCount       Int                  @default(0)
+  /// Giá trị trường tuỳ chỉnh { [fieldKey]: value } (modules/custom-fields)
+  customFields    Json                 @default("{}")
+  publishedAt     DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  deletedAt       DateTime?
+  translations    PostTranslation[]
+  categories      PostCategoryOnPost[]
+  tags            PostTagOnPost[]
+  comments        Comment[]
+  revisions       PostRevision[]
+
+  @@index([status, publishedAt])
+  @@map("posts")
+}
+
+/// Lịch sử phiên bản bài viết (1 bản / lần lưu có thay đổi nội dung, theo locale)
+model PostRevision {
+  id        String   @id @default(uuid()) @db.Uuid
+  postId    String   @db.Uuid
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  locale    String
+  title     String
+  excerpt   String?
+  content   String
+  authorId  String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([postId, locale])
+  @@map("post_revisions")
+}
+
+enum CommentStatus {
+  PENDING
+  APPROVED
+  SPAM
+  TRASH
+}
+
+/// Bình luận bài viết (có trả lời lồng nhau)
+model Comment {
+  id           String        @id @default(uuid()) @db.Uuid
+  postId       String        @db.Uuid
+  post         Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parentId     String?       @db.Uuid
+  parent       Comment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      Comment[]     @relation("CommentReplies")
+  userId       String?       @db.Uuid
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  authorName   String
+  authorEmail  String?
+  authorUrl    String?
+  content      String
+  status       CommentStatus @default(PENDING)
+  /// Trả lời từ quản trị viên (hiển thị nhãn)
+  isAdminReply Boolean       @default(false)
+  ip           String?
+  userAgent    String?
+  locale       String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([postId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([parentId])
+  @@map("comments")
+}
+
+model PostTranslation {
+  id             String  @id @default(uuid()) @db.Uuid
+  postId         String  @db.Uuid
+  post           Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  locale         String
+  title          String
+  slug           String
+  excerpt        String?
+  /// HTML từ rich text editor
+  content        String  @default("")
+  readingTime    Int     @default(0)
+  seoTitle       String?
+  seoDescription String?
+  seoKeywords    String?
+  canonicalUrl   String?
+  ogImageId      String? @db.Uuid
+  noindex        Boolean @default(false)
+  nofollow       Boolean @default(false)
+  schemaJson     Json?
+
+  @@unique([postId, locale])
+  @@unique([locale, slug])
+  @@map("post_translations")
+}
+
+model PostCategory {
+  id           String                    @id @default(uuid()) @db.Uuid
+  parentId     String?                   @db.Uuid
+  parent       PostCategory?             @relation("PostCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     PostCategory[]            @relation("PostCategoryTree")
+  imageId      String?                   @db.Uuid
+  sortOrder    Int                       @default(0)
+  /// Giá trị trường tuỳ chỉnh (modules/custom-fields)
+  customFields Json                      @default("{}")
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  translations PostCategoryTranslation[]
+  posts        PostCategoryOnPost[]
+
+  @@map("post_categories")
+}
+
+model PostCategoryTranslation {
+  id             String       @id @default(uuid()) @db.Uuid
+  categoryId     String       @db.Uuid
+  category       PostCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  locale         String
+  name           String
+  slug           String
+  description    String?
+  seoTitle       String?
+  seoDescription String?
+
+  @@unique([categoryId, locale])
+  @@unique([locale, slug])
+  @@map("post_category_translations")
+}
+
+model PostCategoryOnPost {
+  postId     String       @db.Uuid
+  post       Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  categoryId String       @db.Uuid
+  category   PostCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([postId, categoryId])
+  @@map("post_category_on_post")
+}
+
+model PostTag {
+  id           String               @id @default(uuid()) @db.Uuid
+  createdAt    DateTime             @default(now())
+  translations PostTagTranslation[]
+  posts        PostTagOnPost[]
+
+  @@map("post_tags")
+}
+
+model PostTagTranslation {
+  id     String  @id @default(uuid()) @db.Uuid
+  tagId  String  @db.Uuid
+  tag    PostTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  locale String
+  name   String
+  slug   String
+
+  @@unique([tagId, locale])
+  @@unique([locale, slug])
+  @@map("post_tag_translations")
+}
+
+model PostTagOnPost {
+  postId String  @db.Uuid
+  post   Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId  String  @db.Uuid
+  tag    PostTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@map("post_tag_on_post")
+}
+
+// ============================================================
+// Global blocks (block dùng lại nhiều nơi)
+// ============================================================
+
+model GlobalBlock {
+  id           String                   @id @default(uuid()) @db.Uuid
+  name         String
+  /// key dùng trong code / theme, vd: "site-header", "footer-cta"
+  key          String                   @unique
+  /// loại block (hero, cta...) hoặc "section" = nhóm nhiều block
+  type         String                   @default("section")
+  isActive     Boolean                  @default(true)
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  translations GlobalBlockTranslation[]
+
+  @@map("global_blocks")
+}
+
+model GlobalBlockTranslation {
+  id      String      @id @default(uuid()) @db.Uuid
+  blockId String      @db.Uuid
+  block   GlobalBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  locale  String
+  /// Mảng block con [{ id, type, data, settings }]
+  blocks  Json        @default("[]")
+
+  @@unique([blockId, locale])
+  @@map("global_block_translations")
+}
+
+// ============================================================
+// Menus
+// ============================================================
+
+model Menu {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  /// vị trí trong theme: header, footer, mobile...
+  location  String?  @unique
+  /// Cây menu: [{ id, label: {vi,en}, type: custom|page|post|product|product_category|post_category, refId, url, target, icon, children: [] }]
+  items     Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("menus")
+}
+
+// ============================================================
+// Forms
+// ============================================================
+
+// ============================================================
+// Ecommerce
+// ============================================================
+
+enum ProductType {
+  SIMPLE
+  VARIABLE
+  DIGITAL
+}
+
+enum StockStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+  BACKORDER
+}
+
+model Brand {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  logoId      String?   @db.Uuid
+  website     String?
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+
+  @@map("brands")
+}
+
+model ProductCategory {
+  id           String                       @id @default(uuid()) @db.Uuid
+  parentId     String?                      @db.Uuid
+  parent       ProductCategory?             @relation("ProductCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     ProductCategory[]            @relation("ProductCategoryTree")
+  imageId      String?                      @db.Uuid
+  sortOrder    Int                          @default(0)
+  isActive     Boolean                      @default(true)
+  /// Giá trị trường tuỳ chỉnh (modules/custom-fields)
+  customFields Json                         @default("{}")
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+  translations ProductCategoryTranslation[]
+  products     ProductCategoryOnProduct[]
+
+  @@map("product_categories")
+}
+
+model ProductCategoryTranslation {
+  id             String          @id @default(uuid()) @db.Uuid
+  categoryId     String          @db.Uuid
+  category       ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  locale         String
+  name           String
+  slug           String
+  description    String?
+  seoTitle       String?
+  seoDescription String?
+
+  @@unique([categoryId, locale])
+  @@unique([locale, slug])
+  @@map("product_category_translations")
+}
+
+model ProductCategoryOnProduct {
+  productId  String          @db.Uuid
+  product    Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  categoryId String          @db.Uuid
+  category   ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([productId, categoryId])
+  @@map("product_category_on_product")
+}
+
+model Product {
+  id                String                     @id @default(uuid()) @db.Uuid
+  type              ProductType                @default(SIMPLE)
+  status            ContentStatus              @default(DRAFT)
+  sku               String?                    @unique
+  barcode           String?
+  price             Decimal                    @default(0) @db.Decimal(15, 2)
+  salePrice         Decimal?                   @db.Decimal(15, 2)
+  saleStart         DateTime?
+  saleEnd           DateTime?
+  costPrice         Decimal?                   @db.Decimal(15, 2)
+  manageStock       Boolean                    @default(false)
+  stockQuantity     Int                        @default(0)
+  stockStatus       StockStatus                @default(IN_STOCK)
+  lowStockThreshold Int?
+  weight            Decimal?                   @db.Decimal(10, 3)
+  /// Thuế suất GTGT riêng khi xuất hoá đơn điện tử (0,5,8,10; -1 KCT; -2 KKKNT); null = dùng mặc định ở Cài đặt › Hoá đơn điện tử
+  vatRate           Int?
+  length            Decimal?                   @db.Decimal(10, 2)
+  width             Decimal?                   @db.Decimal(10, 2)
+  height            Decimal?                   @db.Decimal(10, 2)
+  brandId           String?                    @db.Uuid
+  brand             Brand?                     @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  featuredImageId   String?                    @db.Uuid
+  /// Danh sách id ảnh gallery theo thứ tự
+  galleryIds        String[]                   @db.Uuid
+  /// Tuỳ chọn biến thể: [{ name:{vi,en}, key:"color", values:[{ value:"red", label:{vi,en} }] }]
+  options           Json                       @default("[]")
+  /// lớp thuế (TaxRate.taxClass), null = standard
+  taxClass          String?
+  wishlistedBy      WishlistItem[]
+  /// Thông số kỹ thuật: [{ label:{vi,en}, value:{vi,en} }]
+  specs             Json                       @default("[]")
+  /// Giá trị trường tuỳ chỉnh { [fieldKey]: value } (modules/custom-fields)
+  customFields      Json                       @default("{}")
+  isFeatured        Boolean                    @default(false)
+  sortOrder         Int                        @default(0)
+  ratingAverage     Decimal                    @default(0) @db.Decimal(3, 2)
+  ratingCount       Int                        @default(0)
+  soldCount         Int                        @default(0)
+  publishedAt       DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  deletedAt         DateTime?
+  translations      ProductTranslation[]
+  variants          ProductVariant[]
+  categories        ProductCategoryOnProduct[]
+  orderItems        OrderItem[]
+  reviews           ProductReview[]
+  /// Sản phẩm liên quan / bán kèm
+  relatedIds        String[]                   @db.Uuid
+
+  revisions ProductRevision[]
+  downloads ProductDownload[]
+
+  /// Không cần giao hàng (dịch vụ, khoá học, tài khoản, key...). Sản phẩm DIGITAL luôn coi là không cần giao hàng
+  isVirtual        Boolean       @default(false)
+  /// Bán theo kho mã (key / tài khoản / thẻ...): tồn kho = số mã còn trong kho, tự giao mã khi đơn đã thanh toán
+  codeDelivery     Boolean       @default(false)
+  /// Nhãn các phần của một mã khi tách bằng "|": [{ key, label:{vi,en}, secret?:bool }] (vd Tài khoản | Mật khẩu | 2FA)
+  codeFields       Json          @default("[]")
+  /// Số ngày khách được báo lỗi mã (bảo hành) kể từ lúc nhận; null = không nhận báo lỗi
+  codeWarrantyDays Int?
+  /// Thông tin khách phải nhập khi mua (ID game, email cần nâng cấp...):
+  /// [{ key, label:{vi,en}, type: text|email|tel|number|textarea|select|password, required, placeholder?:{vi,en}, options?:[{value,label:{vi,en}}], maxLength? }]
+  purchaseFields   Json          @default("[]")
+  codes            DigitalCode[]
+
+  @@index([status])
+  @@index([brandId])
+  @@map("products")
+}
+
+/// Lịch sử phiên bản sản phẩm: snapshot toàn bộ dữ liệu (kể cả bản dịch, biến thể) mỗi lần lưu
+model ProductRevision {
+  id        String   @id @default(uuid()) @db.Uuid
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Tên sản phẩm (locale mặc định) để hiển thị
+  title     String
+  snapshot  Json
+  authorId  String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@map("product_revisions")
+}
+
+model ProductTranslation {
+  id               String  @id @default(uuid()) @db.Uuid
+  productId        String  @db.Uuid
+  product          Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  locale           String
+  name             String
+  slug             String
+  shortDescription String?
+  description      String  @default("")
+  seoTitle         String?
+  seoDescription   String?
+  seoKeywords      String?
+  canonicalUrl     String?
+  ogImageId        String? @db.Uuid
+  noindex          Boolean @default(false)
+  schemaJson       Json?
+  /// Hướng dẫn sử dụng gửi kèm mã / tài khoản (hiện trong email giao mã và trang đơn hàng)
+  deliveryNote     String?
+
+  @@unique([productId, locale])
+  @@unique([locale, slug])
+  @@map("product_translations")
+}
+
+model ProductVariant {
+  id            String        @id @default(uuid()) @db.Uuid
+  productId     String        @db.Uuid
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku           String?       @unique
+  /// { color: "red", size: "M" }
+  optionValues  Json          @default("{}")
+  price         Decimal       @db.Decimal(15, 2)
+  salePrice     Decimal?      @db.Decimal(15, 2)
+  stockQuantity Int           @default(0)
+  stockStatus   StockStatus   @default(IN_STOCK)
+  imageId       String?       @db.Uuid
+  weight        Decimal?      @db.Decimal(10, 3)
+  isActive      Boolean       @default(true)
+  sortOrder     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  orderItems    OrderItem[]
+  codes         DigitalCode[]
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+}
+
+model Order {
+  id              String               @id @default(uuid()) @db.Uuid
+  code            String               @unique
+  userId          String?              @db.Uuid
+  user            User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  status          OrderStatus          @default(PENDING)
+  paymentStatus   PaymentStatus        @default(UNPAID)
+  paymentMethod   String               @default("cod")
+  shippingMethod  String?
+  currency        String               @default("VND")
+  subtotal        Decimal              @db.Decimal(15, 2)
+  discountTotal   Decimal              @default(0) @db.Decimal(15, 2)
+  shippingTotal   Decimal              @default(0) @db.Decimal(15, 2)
+  taxTotal        Decimal              @default(0) @db.Decimal(15, 2)
+  total           Decimal              @db.Decimal(15, 2)
+  couponCode      String?
+  customerName    String
+  customerEmail   String?
+  customerPhone   String
+  /// { fullName, phone, line1, line2, ward, district, city, country }
+  shippingAddress Json
+  billingAddress  Json?
+  note            String?
+  adminNote       String?
+  locale          String?
+  ip              String?
+  /// Lịch sử trạng thái [{ status, note, at, by }]
+  history         Json                 @default("[]")
+  paidAt          DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  items           OrderItem[]
+  payments        PaymentTransaction[]
+
+  shippingMethodId   String?             @db.Uuid
+  /// web | admin | pos
+  source             String              @default("web")
+  createdById        String?             @db.Uuid
+  refundedTotal      Decimal             @default(0) @db.Decimal(15, 2)
+  refunds            Refund[]
+  downloads          OrderDownload[]
+  couponUsages       CouponUsage[]
+  walletTransactions WalletTransaction[]
+  /// Khách yêu cầu xuất hoá đơn điện tử khi đặt hàng: { requested, type: company|personal, name, taxCode, address, email, idNumber }
+  invoiceRequest     Json?
+  eInvoices          EInvoice[]
+  /// Phương thức vận chuyển khách chọn khi phí lấy từ hãng: { carrier, service, serviceName, quotedFee, estimatedDays, expectedDeliveryAt }
+  shippingMeta       Json?
+  shipments          Shipment[]
+  /// false = đơn toàn sản phẩm ảo / số, không cần địa chỉ & phí giao hàng
+  requiresShipping   Boolean             @default(true)
+  /// Giao mã (kho mã số): null = đơn không có sản phẩm bán theo kho mã | pending | partial | delivered
+  codeStatus         String?
+  /// Thời điểm đã giao đủ mã cho đơn
+  codesDeliveredAt   DateTime?
+  codes              DigitalCode[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([codeStatus])
+  @@map("orders")
+}
+
+model OrderItem {
+  id           String          @id @default(uuid()) @db.Uuid
+  orderId      String          @db.Uuid
+  order        Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId    String?         @db.Uuid
+  product      Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId    String?         @db.Uuid
+  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  name         String
+  sku          String?
+  optionValues Json            @default("{}")
+  image        String?
+  price        Decimal         @db.Decimal(15, 2)
+  quantity     Int
+  total        Decimal         @db.Decimal(15, 2)
+  /// Thông tin khách nhập khi mua (Product.purchaseFields): { fields: [{ key, label, value }] }
+  meta         Json?
+  /// Số lượng đã hoàn lại kho (refund có hoàn kho / huỷ đơn) — không bao giờ vượt quantity
+  restockedQty Int             @default(0)
+  codes        DigitalCode[]
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+enum CouponType {
+  PERCENT
+  FIXED
+  FREE_SHIPPING
+}
+
+model Coupon {
+  id            String     @id @default(uuid()) @db.Uuid
+  code          String     @unique
+  description   String?
+  type          CouponType @default(PERCENT)
+  value         Decimal    @db.Decimal(15, 2)
+  minOrderTotal Decimal?   @db.Decimal(15, 2)
+  maxDiscount   Decimal?   @db.Decimal(15, 2)
+  usageLimit    Int?
+  usedCount     Int        @default(0)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  productIds        String[]      @default([])
+  excludeProductIds String[]      @default([])
+  categoryIds       String[]      @default([])
+  perUserLimit      Int?
+  firstOrderOnly    Boolean       @default(false)
+  usages            CouponUsage[]
+
+  @@map("coupons")
+}
+
+// ============================================================
+// Đánh giá sản phẩm
+// ============================================================
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SPAM
+}
+
+model ProductReview {
+  id           String       @id @default(uuid()) @db.Uuid
+  productId    String       @db.Uuid
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId       String?      @db.Uuid
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Đơn hàng dùng để xác minh "đã mua hàng"
+  orderId      String?      @db.Uuid
+  authorName   String
+  authorEmail  String?
+  rating       Int
+  title        String?
+  content      String
+  status       ReviewStatus @default(PENDING)
+  isVerified   Boolean      @default(false)
+  /// Phản hồi của cửa hàng
+  reply        String?
+  repliedAt    DateTime?
+  repliedById  String?      @db.Uuid
+  helpfulCount Int          @default(0)
+  locale       String?
+  ip           String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([productId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("product_reviews")
+}
+
+// ============================================================
+// Thanh toán online
+// ============================================================
+
+enum PaymentTransactionStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+/// Mỗi lần khách bấm thanh toán online tạo 1 giao dịch (có thể thanh toán lại nhiều lần)
+model PaymentTransaction {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  /// null khi giao dịch là nạp ví (purpose = wallet)
+  orderId             String?                  @db.Uuid
+  order               Order?                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// order = thanh toán đơn hàng | wallet = khách nạp tiền vào ví
+  purpose             String                   @default("order")
+  /// Chủ ví được cộng tiền khi purpose = wallet
+  userId              String?                  @db.Uuid
+  user                User?                    @relation("PaymentTxnUser", fields: [userId], references: [id], onDelete: SetNull)
+  /// payos | sepay | pay2s ...
+  provider            String
+  amount              Decimal                  @db.Decimal(15, 2)
+  currency            String                   @default("VND")
+  status              PaymentTransactionStatus @default(PENDING)
+  /// Mã giao dịch gửi sang cổng (vd orderCode số của PayOS, requestId của Pay2S)
+  providerOrderCode   String
+  /// Mã tham chiếu cổng trả về (paymentLinkId, transId, mã giao dịch ngân hàng...)
+  reference           String?
+  /// Mã giao dịch duy nhất phía cổng/ngân hàng của lần nhận tiền (chống xử lý trùng webhook)
+  providerTxnId       String?
+  /// Nhận tiền nhưng đơn đã huỷ / đã thanh toán bằng giao dịch khác -> cần hoàn tiền cho khách
+  needsRefund         Boolean                  @default(false)
+  note                String?
+  /// Nội dung chuyển khoản (cổng theo dõi biến động số dư)
+  transferContent     String?
+  /// transferContent đã chuẩn hoá (chữ hoa, bỏ ký tự không phải chữ/số) để tra nhanh bằng index khi nhận webhook
+  transferContentNorm String?
+  checkoutUrl         String?
+  qrData              String?
+  rawRequest          Json?
+  rawResponse         Json?
+  webhookData         Json?
+  paidAt              DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  @@unique([provider, providerOrderCode])
+  @@unique([provider, providerTxnId])
+  @@index([orderId])
+  @@index([userId])
+  @@index([status, createdAt])
+  @@index([provider, transferContentNorm])
+  @@map("payment_transactions")
+}
+
+/// Nhật ký webhook nhận từ cổng thanh toán (đối soát / gỡ lỗi)
+model PaymentWebhookLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  provider  String
+  payload   Json
+  valid     Boolean  @default(false)
+  matched   Boolean  @default(false)
+  note      String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@map("payment_webhook_logs")
+}
+
+// ============================================================
+// SEO
+// ============================================================
+
+model Redirect {
+  id         String   @id @default(uuid()) @db.Uuid
+  fromPath   String   @unique
+  toPath     String
+  statusCode Int      @default(301)
+  isActive   Boolean  @default(true)
+  hits       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("redirects")
+}
+
+// ============================================================
+// Tác vụ nền (hàng đợi job)
+// ============================================================
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+model Job {
+  id          String    @id @default(uuid()) @db.Uuid
+  type        String
+  payload     Json      @default("{}")
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  runAt       DateTime  @default(now())
+  lockedAt    DateTime?
+  lastError   String?
+  /// Module tạo job (null = lõi)
+  owner       String?
+  /// Khoá chống tạo trùng khi job còn chờ
+  dedupeKey   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt])
+  @@index([dedupeKey])
+  @@map("jobs")
+}
+
+// ============================================================
+// Vận chuyển, mã giảm giá nâng cao, sản phẩm số, hoàn tiền
+// ============================================================
+
+/// Vùng vận chuyển: khớp theo mã tỉnh/thành (vd "VN-HN") hoặc quốc gia ("VN"), "*" = mọi nơi
+model ShippingZone {
+  id        String           @id @default(uuid()) @db.Uuid
+  name      String
+  regions   String[]         @default([])
+  isActive  Boolean          @default(true)
+  sortOrder Int              @default(0)
+  methods   ShippingMethod[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@map("shipping_zones")
+}
+
+enum ShippingMethodType {
+  FLAT
+  FREE
+  WEIGHT
+  PRICE
+  PICKUP
+  /// Lấy phí thật từ API đơn vị vận chuyển (GHN, GHTK, Viettel Post...)
+  CARRIER
+}
+
+model ShippingMethod {
+  id            String             @id @default(uuid()) @db.Uuid
+  zoneId        String             @db.Uuid
+  zone          ShippingZone       @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  type          ShippingMethodType @default(FLAT)
+  /// { vi, en }
+  name          Json
+  description   Json?
+  cost          Decimal            @default(0) @db.Decimal(15, 2)
+  /// FREE: miễn phí từ giá trị đơn này
+  minOrderTotal Decimal?           @db.Decimal(15, 2)
+  /// WEIGHT/PRICE: [{ upTo: 1000, cost: 20000 }, ...] (upTo null = còn lại)
+  rules         Json               @default("[]")
+  isActive      Boolean            @default(true)
+  sortOrder     Int                @default(0)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  /// CARRIER: key hãng (ghn | ghtk | viettelpost | ...); null = mọi hãng đã bật
+  carrier        String?
+  /// CARRIER: mã dịch vụ của hãng (vd GHN 53320); null = mọi dịch vụ hãng trả về
+  carrierService String?
+  /// CARRIER: điều chỉnh phí hãng trước khi hiện cho khách { type: 'fixed' | 'percent', value } (âm = giảm)
+  feeAdjust      Json?
+  /// CARRIER: phí dự phòng khi API hãng lỗi (null = ẩn phương thức)
+  fallbackCost   Decimal? @db.Decimal(15, 2)
+
+  @@index([zoneId])
+  @@map("shipping_methods")
+}
+
+/// Danh mục địa chỉ hành chính (tỉnh / quận-huyện / phường-xã) đồng bộ từ hãng vận chuyển, dùng cho checkout & tạo vận đơn
+model ShippingLocation {
+  id           String   @id @default(uuid()) @db.Uuid
+  /// 1 = tỉnh/thành, 2 = quận/huyện, 3 = phường/xã
+  level        Int
+  /// Mã nội bộ duy nhất: tỉnh "VN-HN", quận "VN-HN-D1442", phường "VN-HN-D1442-W21211"
+  code         String   @unique
+  name         String
+  /// Tên đã bỏ dấu/viết thường để so khớp giữa các hãng
+  normalized   String
+  parentCode   String?
+  /// Mã của từng hãng: { ghn: "1442", vtp: "2", ghtk: "Quận 1" }
+  carrierCodes Json     @default("{}")
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([parentCode])
+  @@index([level, normalized])
+  @@map("shipping_locations")
+}
+
+/// Trạng thái vận đơn đã chuẩn hoá giữa các hãng
+enum ShipmentStatus {
+  /// Đã tạo vận đơn, chờ hãng lấy hàng
+  PENDING
+  /// Hãng đang đến lấy hàng
+  PICKING
+  /// Đã lấy hàng / đang trung chuyển
+  PICKED
+  /// Đang giao
+  DELIVERING
+  /// Giao thành công
+  DELIVERED
+  /// Đang hoàn về
+  RETURNING
+  /// Đã hoàn về
+  RETURNED
+  /// Đã huỷ
+  CANCELLED
+  /// Tạo vận đơn / giao thất bại
+  FAILED
+}
+
+/// Vận đơn tạo qua API đơn vị vận chuyển
+model Shipment {
+  id                 String         @id @default(uuid()) @db.Uuid
+  orderId            String         @db.Uuid
+  order              Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// key hãng: ghn | ghtk | viettelpost | jt | vnpost | ahamove | ninjavan | best | goship | manual
+  carrier            String
+  service            String?
+  serviceName        String?
+  /// Mã vận đơn hãng cấp (in trên nhãn, khách tra cứu)
+  trackingCode       String?
+  /// id đơn ở phía hãng (nếu khác mã vận đơn)
+  carrierOrderId     String?
+  status             ShipmentStatus @default(PENDING)
+  /// Mã trạng thái thô của hãng
+  statusCode         String?
+  statusMessage      String?
+  fee                Decimal        @default(0) @db.Decimal(15, 2)
+  codAmount          Decimal        @default(0) @db.Decimal(15, 2)
+  insuranceValue     Decimal        @default(0) @db.Decimal(15, 2)
+  /// gram
+  weight             Int            @default(0)
+  /// cm
+  length             Int?
+  width              Int?
+  height             Int?
+  /// Ghi chú cho shipper
+  note               String?
+  /// Người trả phí: shop | customer
+  payer              String         @default("shop")
+  /// Snapshot địa chỉ lấy hàng & giao hàng lúc tạo
+  pickup             Json           @default("{}")
+  recipient          Json           @default("{}")
+  trackingUrl        String?
+  labelUrl           String?
+  /// Nhãn đã lưu trong storage
+  labelPath          String?
+  expectedDeliveryAt DateTime?
+  pickedAt           DateTime?
+  deliveredAt        DateTime?
+  cancelledAt        DateTime?
+  lastSyncAt         DateTime?
+  errorMessage       String?
+  /// Hành trình [{ status, statusCode, message, location, at, source: webhook|sync|system }]
+  events             Json           @default("[]")
+  /// Dữ liệu thô của hãng (request/response gần nhất)
+  meta               Json           @default("{}")
+  createdById        String?        @db.Uuid
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([carrier, trackingCode])
+  @@map("shipments")
+}
+
+/// Lượt dùng mã giảm giá (giới hạn mỗi khách)
+model CouponUsage {
+  id        String   @id @default(uuid()) @db.Uuid
+  couponId  String   @db.Uuid
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  orderId   String   @db.Uuid
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId    String?  @db.Uuid
+  email     String?
+  createdAt DateTime @default(now())
+
+  @@index([couponId, userId])
+  @@index([couponId, email])
+  @@map("coupon_usages")
+}
+
+/// File tải về của sản phẩm số
+model ProductDownload {
+  id            String   @id @default(uuid()) @db.Uuid
+  productId     String   @db.Uuid
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name          String
+  /// File trong thư viện media (ưu tiên) hoặc URL ngoài
+  mediaId       String?  @db.Uuid
+  url           String?
+  /// Số lượt tải tối đa / đơn (null = không giới hạn)
+  downloadLimit Int?
+  /// Hết hạn sau N ngày kể từ khi thanh toán (null = vĩnh viễn)
+  expiryDays    Int?
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([productId])
+  @@map("product_downloads")
+}
+
+/// Quyền tải file cấp cho đơn hàng đã thanh toán
+model OrderDownload {
+  id                String    @id @default(uuid()) @db.Uuid
+  orderId           String    @db.Uuid
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId       String?   @db.Uuid
+  productDownloadId String?   @db.Uuid
+  name              String
+  mediaId           String?   @db.Uuid
+  url               String?
+  downloadLimit     Int?
+  downloadCount     Int       @default(0)
+  expiresAt         DateTime?
+  token             String    @unique
+  createdAt         DateTime  @default(now())
+
+  @@index([orderId])
+  @@map("order_downloads")
+}
+
+// ============================================================
+// Ví thành viên
+// ============================================================
+
+enum WalletTxnType {
+  /// Admin nạp tiền vào ví
+  DEPOSIT
+  /// Admin trừ tiền khỏi ví
+  WITHDRAW
+  /// Thanh toán đơn hàng bằng số dư
+  PAYMENT
+  /// Hoàn tiền đơn hàng vào ví
+  REFUND
+}
+
+/// Lịch sử biến động số dư ví. `amount` có dấu: dương = cộng, âm = trừ. `balanceAfter` = số dư sau giao dịch.
+model WalletTransaction {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @db.Uuid
+  user           User          @relation("WalletOwner", fields: [userId], references: [id], onDelete: Cascade)
+  type           WalletTxnType
+  amount         Decimal       @db.Decimal(15, 2)
+  balanceAfter   Decimal       @db.Decimal(15, 2)
+  note           String?
+  orderId        String?       @db.Uuid
+  order          Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  /// Admin thực hiện (null = hệ thống / khách tự thanh toán)
+  createdById    String?       @db.Uuid
+  createdBy      User?         @relation("WalletActor", fields: [createdById], references: [id], onDelete: SetNull)
+  meta           Json          @default("{}")
+  /// Khoá chống trùng do client gửi (admin cộng/trừ tay) — cùng khoá chỉ ghi một lần
+  idempotencyKey String?       @unique
+  createdAt      DateTime      @default(now())
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+  @@map("wallet_transactions")
+}
+
+/// Trạng thái một lần nạp thẻ cào
+enum CardTopupStatus {
+  /// Đã gửi sang nhà cung cấp, chờ kết quả (callback / kiểm tra định kỳ)
+  PENDING
+  /// Thẻ đúng mệnh giá, đã cộng ví
+  SUCCESS
+  /// Thẻ đúng nhưng sai mệnh giá khai báo — vẫn cộng ví theo mệnh giá thật (có phạt)
+  WRONG_VALUE
+  /// Thẻ lỗi / đã dùng / nhà cung cấp từ chối
+  FAILED
+}
+
+/// Thẻ cào thành viên nạp vào ví (modules/card-topup). Mỗi dòng = một lần gửi thẻ sang nhà cung cấp đổi thẻ.
+model CardTopup {
+  id             String          @id @default(uuid()) @db.Uuid
+  /// Mã yêu cầu gửi sang nhà cung cấp (request_id) — nhà cung cấp gửi lại trong callback
+  code           String          @unique
+  userId         String          @db.Uuid
+  user           User            @relation("CardTopupOwner", fields: [userId], references: [id], onDelete: Cascade)
+  /// Khoá nhà cung cấp đã xử lý thẻ (card24h, thesieure...)
+  provider       String
+  /// Mã nhà mạng (VIETTEL, MOBIFONE...)
+  telco          String
+  serial         String
+  pin            String
+  /// Mệnh giá khách khai báo
+  declaredValue  Int
+  /// Mệnh giá thật nhà cung cấp xác nhận
+  realValue      Int?
+  /// Số tiền nhà cung cấp trả cho shop (sau chiết khấu của họ)
+  providerAmount Decimal?        @db.Decimal(15, 2)
+  /// Số tiền đã cộng vào ví khách
+  credited       Decimal         @default(0) @db.Decimal(15, 2)
+  /// Chiết khấu (%) áp cho khách lúc gửi thẻ — lưu lại để đối soát khi cấu hình đổi
+  discount       Decimal         @default(0) @db.Decimal(5, 2)
+  status         CardTopupStatus @default(PENDING)
+  /// Lý do lỗi / thông báo của nhà cung cấp
+  message        String?
+  /// Thẻ FAILED do lỗi phía hệ thống / nhà cung cấp (chưa nhận được thẻ...) — không tính vào giới hạn thẻ lỗi của khách
+  systemError    Boolean         @default(false)
+  /// Mã giao dịch phía nhà cung cấp
+  providerRef    String?
+  /// Dòng ví đã cộng (để truy vết, chống cộng trùng)
+  walletTxnId    String?         @db.Uuid
+  /// Admin duyệt / từ chối thủ công (null = tự động)
+  reviewedById   String?         @db.Uuid
+  reviewedBy     User?           @relation("CardTopupReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  ip             String?
+  /// Lần kiểm tra trạng thái gần nhất với nhà cung cấp (cron)
+  checkedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([serial, pin])
+  @@map("card_topups")
+}
+
+enum RefundStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+/// Hoàn tiền (một phần / toàn bộ) cho đơn hàng
+model Refund {
+  id            String       @id @default(uuid()) @db.Uuid
+  orderId       String       @db.Uuid
+  order         Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  transactionId String?      @db.Uuid
+  amount        Decimal      @db.Decimal(15, 2)
+  reason        String?
+  /// gateway (qua cổng) | manual (chuyển khoản tay)
+  method        String       @default("manual")
+  status        RefundStatus @default(COMPLETED)
+  providerRef   String?
+  /// Hoàn kho các dòng hàng
+  restock       Boolean      @default(false)
+  createdById   String?      @db.Uuid
+  createdAt     DateTime     @default(now())
+
+  @@index([orderId])
+  @@map("refunds")
+}
+
+// ============================================================
+// Email template & nhật ký email
+// ============================================================
+
+model EmailTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String
+  locale    String
+  subject   String
+  html      String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([key, locale])
+  @@map("email_templates")
+}
+
+enum EmailStatus {
+  /// Đang chờ trong hàng gửi (kể cả đang chờ tới lượt thử lại)
+  QUEUED
+  /// Worker đang gửi
+  SENDING
+  SENT
+  /// Hết số lần thử hoặc lỗi vĩnh viễn (địa chỉ nhận bị từ chối...)
+  FAILED
+  SKIPPED
+  /// Quản trị viên huỷ khi còn trong hàng chờ
+  CANCELLED
+}
+
+model EmailLog {
+  id            String      @id @default(uuid()) @db.Uuid
+  to            String
+  subject       String
+  templateKey   String?
+  status        EmailStatus @default(SENT)
+  error         String?
+  /// { orderId, userId ... }
+  meta          Json        @default("{}")
+  /// Hàng chờ gửi: số lần đã thử / tối đa, lần thử kế tiếp, độ ưu tiên (cao gửi trước)
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(5)
+  nextAttemptAt DateTime?
+  priority      Int         @default(0)
+  /// Thời điểm worker nhận gửi (phát hiện bản ghi kẹt khi tiến trình chết giữa chừng)
+  lockedAt      DateTime?
+  sentAt        DateTime?
+  /// File đính kèm chờ gửi [{ filename, contentType, base64 }] — xoá sau khi gửi thành công
+  attachments   Json?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
+
+  @@index([createdAt])
+  @@index([templateKey])
+  @@index([status, nextAttemptAt])
+  @@index([sentAt])
+  @@map("email_logs")
+}
+
+// ============================================================
+// Thống kê truy cập (tự lưu, không cookie)
+// ============================================================
+
+/// Một lượt xem trang trên storefront. Không lưu IP: khách nhận diện bằng mã băm đổi mỗi ngày.
+model PageView {
+  id           BigInt   @id @default(autoincrement())
+  createdAt    DateTime @default(now())
+  /// Đường dẫn không kèm query, vd /en/blog/bai-viet
+  path         String
+  title        String?
+  locale       String?
+  /// sha256(bí mật + ngày + IP + User-Agent) rút gọn — đổi mỗi ngày, không truy ngược được IP
+  visitorId    String
+  /// Mã phiên ngẫu nhiên do trình duyệt tạo (sessionStorage, hết hạn sau 30 phút không hoạt động)
+  sessionId    String
+  /// Lượt xem đầu tiên của phiên (trang vào)
+  isEntry      Boolean  @default(false)
+  /// Tên miền nguồn giới thiệu (bỏ www), null = truy cập trực tiếp / nội bộ
+  referrerHost String?
+  referrer     String?
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  /// desktop | mobile | tablet
+  device       String
+  browser      String?
+  os           String?
+  /// Mã quốc gia ISO (từ header CDN như cf-ipcountry), có thể null
+  country      String?
+
+  @@index([createdAt])
+  @@index([path, createdAt])
+  @@index([sessionId])
+  @@map("page_views")
+}
+
+// ============================================================
+// Hoá đơn điện tử (NĐ 123/2020, TT 78/2021) — tích hợp nhà cung cấp HĐĐT
+// ============================================================
+
+enum EInvoiceStatus {
+  /// Nháp, chưa gửi nhà cung cấp
+  DRAFT
+  /// Đã xếp hàng chờ job phát hành
+  QUEUED
+  /// Đang gửi nhà cung cấp / chờ cơ quan thuế cấp mã
+  ISSUING
+  /// Đã phát hành (có số hoá đơn, mã CQT nếu loại có mã)
+  ISSUED
+  /// Đã huỷ
+  CANCELLED
+  /// Đã bị thay thế bởi hoá đơn khác
+  REPLACED
+  /// Đã bị điều chỉnh bởi hoá đơn khác
+  ADJUSTED
+  /// Phát hành thất bại (xem errorMessage / logs)
+  FAILED
+}
+
+enum EInvoiceKind {
+  /// Hoá đơn gốc
+  ORIGINAL
+  /// Hoá đơn thay thế (cho hoá đơn gốc đã huỷ)
+  REPLACEMENT
+  /// Hoá đơn điều chỉnh (tăng/giảm)
+  ADJUSTMENT
+}
+
+model EInvoice {
+  id               String         @id @default(uuid()) @db.Uuid
+  orderId          String?        @db.Uuid
+  order            Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  /// key nhà cung cấp: viettel | vnpt | misa | bkav | easyinvoice | fpt | mobifone | custom | manual
+  provider         String
+  kind             EInvoiceKind   @default(ORIGINAL)
+  status           EInvoiceStatus @default(DRAFT)
+  /// Mẫu số (vd 1/001) — theo TT78 là "1", "2"...
+  templateCode     String?
+  /// Ký hiệu hoá đơn (vd C25TAA)
+  serial           String?
+  /// Số hoá đơn do nhà cung cấp/CQT cấp
+  invoiceNo        String?
+  /// Mã của cơ quan thuế (hoá đơn có mã)
+  taxAuthorityCode String?
+  /// Mã giao dịch / id hoá đơn ở phía nhà cung cấp
+  providerRef      String?
+  /// Mã tra cứu trên cổng nhà cung cấp
+  lookupCode       String?
+  lookupUrl        String?
+  /// Đường dẫn file đã tải về lưu trong storage (local/S3)
+  pdfPath          String?
+  xmlPath          String?
+  /// Snapshot thông tin người bán lúc phát hành
+  seller           Json           @default("{}")
+  /// Người mua: { name, legalName, taxCode, address, email, phone, idNumber, bankAccount, bankName, budgetCode }
+  buyer            Json           @default("{}")
+  /// Dòng hàng: [{ name, unit, quantity, unitPrice, discount, vatRate, vatAmount, amount, total, sku, kind }]
+  items            Json           @default("[]")
+  currency         String         @default("VND")
+  exchangeRate     Decimal        @default(1) @db.Decimal(15, 4)
+  subtotal         Decimal        @default(0) @db.Decimal(15, 2)
+  discountTotal    Decimal        @default(0) @db.Decimal(15, 2)
+  vatTotal         Decimal        @default(0) @db.Decimal(15, 2)
+  total            Decimal        @default(0) @db.Decimal(15, 2)
+  /// Hình thức thanh toán ghi trên hoá đơn: TM | CK | TM/CK | ...
+  paymentMethod    String?
+  note             String?
+  /// Ngày lập hoá đơn (ngày ghi trên hoá đơn)
+  invoiceDate      DateTime       @default(now())
+  issuedAt         DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  /// Lý do thay thế / điều chỉnh (ghi trên hoá đơn mới)
+  reason           String?
+  errorMessage     String?
+  attempts         Int            @default(0)
+  /// Lần cuối gửi email hoá đơn cho khách
+  emailSentAt      DateTime?
+  /// Hoá đơn gốc (khi kind = REPLACEMENT / ADJUSTMENT)
+  originalId       String?        @db.Uuid
+  original         EInvoice?      @relation("EInvoiceOriginal", fields: [originalId], references: [id], onDelete: SetNull)
+  derived          EInvoice[]     @relation("EInvoiceOriginal")
+  createdById      String?        @db.Uuid
+  /// Dữ liệu thêm theo nhà cung cấp (response thô, reservationCode, ...)
+  meta             Json           @default("{}")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  logs             EInvoiceLog[]
+
+  @@index([orderId])
+  @@index([status])
+  @@index([provider, invoiceNo])
+  @@index([createdAt])
+  @@map("e_invoices")
+}
+
+/// Nhật ký thao tác với nhà cung cấp HĐĐT (request/response để tra lỗi)
+model EInvoiceLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  invoiceId String   @db.Uuid
+  invoice   EInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// create | issue | cancel | replace | adjust | sync | download | email | retry
+  action    String
+  /// ok | error
+  status    String
+  message   String?
+  request   Json?
+  response  Json?
+  actorId   String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId, createdAt])
+  @@map("e_invoice_logs")
+}
+
+/// Nhóm trường tuỳ chỉnh (giống ACF): gắn thêm trường dữ liệu vào trang / bài viết / sản phẩm / danh mục / thành viên
+/// mà không cần sửa schema lõi. Định nghĩa trường ở `fields` (CustomFieldDef[]), điều kiện hiển thị ở `rules`.
+model FieldGroup {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Mã nhóm (slug, duy nhất) dùng trong API / theme, vd "course_info"
+  key         String   @unique
+  name        String
+  description String?
+  /// page | post | product | post_category | product_category | user
+  entity      String
+  /// Danh sách trường: [{ key, label, type, required, i18n, options, help, default, fields (repeater), showIf, width }]
+  fields      Json     @default("[]")
+  /// Điều kiện hiển thị: { templates?: string[], categoryIds?: string[], productTypes?: string[], roleSlugs?: string[] } — rỗng = luôn hiện
+  rules       Json     @default("{}")
+  /// main = cột nội dung chính, sidebar = cột phải trong trang soạn thảo
+  placement   String   @default("main")
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([entity, isActive])
+  @@map("field_groups")
+}
+
+// ============================================================================
+// Loại nội dung tuỳ biến (Custom Post Type) + phân loại (Taxonomy) — modules/content
+// Cho phép mỗi website tự khai báo "Dự án", "Dịch vụ", "Tuyển dụng", "Khoá học"...
+// mà không sửa lõi. URL công khai: /{slug loại}/{slug bài}, lưu trữ /{slug loại},
+// phân loại /{slug taxonomy}/{slug term}. Giá trị trường tuỳ chỉnh dùng entity "entry"/"term".
+// ============================================================================
+
+/// Loại nội dung tuỳ biến
+model ContentType {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// mã máy (a-z0-9_), duy nhất, dùng trong API / theme / template: "project"
+  key         String   @unique
+  /// nhãn theo locale: { vi: { singular: "Dự án", plural: "Dự án" }, en: {...} }
+  labels      Json     @default("{}")
+  /// đường dẫn gốc theo locale: { vi: "du-an", en: "projects" }
+  slugs       Json     @default("{}")
+  description String?
+  /// tên icon lucide (kebab-case) cho menu admin
+  icon        String   @default("file-text")
+  /// tính năng: editor, excerpt, featuredImage, blocks, author, revisions, hierarchical, comments, featured, order
+  supports    String[] @default(["editor", "excerpt", "featuredImage", "revisions"])
+  /// có URL công khai (false = chỉ là dữ liệu, vd "Đánh giá khách hàng" dùng trong block)
+  isPublic    Boolean  @default(true)
+  /// có trang lưu trữ /{slug}
+  hasArchive  Boolean  @default(true)
+  /// hiện trong tìm kiếm website
+  searchable  Boolean  @default(true)
+  /// số bài mỗi trang lưu trữ
+  perPage     Int      @default(12)
+  /// sắp xếp mặc định: publishedAt_desc | publishedAt_asc | title_asc | sortOrder_asc
+  orderBy     String   @default("publishedAt_desc")
+  /// cột trường tuỳ chỉnh hiện thêm trong danh sách admin: ["price", "location"]
+  listColumns String[] @default([])
+  /// nguồn khai báo: admin | theme | preset:<key>
+  source      String   @default("admin")
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  entries     Entry[]
+
+  @@map("content_types")
+}
+
+/// Phân loại (taxonomy) gắn với một hoặc nhiều loại nội dung: "Lĩnh vực", "Khu vực"...
+model Taxonomy {
+  id           String   @id @default(uuid()) @db.Uuid
+  key          String   @unique
+  /// { vi: { singular, plural }, en: {...} }
+  labels       Json     @default("{}")
+  /// đường dẫn gốc theo locale: { vi: "linh-vuc", en: "fields" }
+  slugs        Json     @default("{}")
+  description  String?
+  /// dạng cây (như chuyên mục) hay phẳng (như thẻ)
+  hierarchical Boolean  @default(true)
+  /// key các ContentType dùng taxonomy này
+  contentTypes String[] @default([])
+  /// có trang lưu trữ công khai /{slug}/{term}
+  isPublic     Boolean  @default(true)
+  /// hiện làm bộ lọc ở trang lưu trữ
+  showInFilter Boolean  @default(true)
+  source       String   @default("admin")
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  terms        Term[]
+
+  @@map("taxonomies")
+}
+
+model Term {
+  id           String            @id @default(uuid()) @db.Uuid
+  taxonomyId   String            @db.Uuid
+  taxonomy     Taxonomy          @relation(fields: [taxonomyId], references: [id], onDelete: Cascade)
+  parentId     String?           @db.Uuid
+  parent       Term?             @relation("TermTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Term[]            @relation("TermTree")
+  imageId      String?           @db.Uuid
+  sortOrder    Int               @default(0)
+  /// giá trị trường tuỳ chỉnh (entity "term")
+  customFields Json              @default("{}")
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  translations TermTranslation[]
+  entries      EntryTerm[]
+
+  @@index([taxonomyId])
+  @@map("terms")
+}
+
+model TermTranslation {
+  id             String  @id @default(uuid()) @db.Uuid
+  termId         String  @db.Uuid
+  term           Term    @relation(fields: [termId], references: [id], onDelete: Cascade)
+  /// lặp lại taxonomyId để slug chỉ cần duy nhất trong một taxonomy
+  taxonomyId     String  @db.Uuid
+  locale         String
+  name           String
+  slug           String
+  description    String?
+  seoTitle       String?
+  seoDescription String?
+
+  @@unique([termId, locale])
+  @@unique([taxonomyId, locale, slug])
+  @@map("term_translations")
+}
+
+/// Bài thuộc một loại nội dung tuỳ biến
+model Entry {
+  id              String             @id @default(uuid()) @db.Uuid
+  typeId          String             @db.Uuid
+  type            ContentType        @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  status          ContentStatus      @default(DRAFT)
+  parentId        String?            @db.Uuid
+  parent          Entry?             @relation("EntryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children        Entry[]            @relation("EntryTree")
+  authorId        String?            @db.Uuid
+  author          User?              @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  featuredImageId String?            @db.Uuid
+  isFeatured      Boolean            @default(false)
+  sortOrder       Int                @default(0)
+  /// giá trị trường tuỳ chỉnh (entity "entry", nhóm trường lọc theo rules.contentTypes)
+  customFields    Json               @default("{}")
+  publishedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  deletedAt       DateTime?
+  translations    EntryTranslation[]
+  terms           EntryTerm[]
+  revisions       EntryRevision[]
+
+  @@index([typeId, status, publishedAt])
+  @@map("entries")
+}
+
+model EntryTranslation {
+  id             String  @id @default(uuid()) @db.Uuid
+  entryId        String  @db.Uuid
+  entry          Entry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  /// lặp lại typeId để slug chỉ cần duy nhất trong một loại nội dung
+  typeId         String  @db.Uuid
+  locale         String
+  title          String
+  slug           String
+  excerpt        String?
+  /// HTML từ trình soạn thảo (supports "editor")
+  content        String  @default("")
+  /// nội dung dựng bằng Page Builder (supports "blocks")
+  blocks         Json    @default("[]")
+  seoTitle       String?
+  seoDescription String?
+  seoKeywords    String?
+  canonicalUrl   String?
+  ogImageId      String? @db.Uuid
+  noindex        Boolean @default(false)
+  nofollow       Boolean @default(false)
+  schemaJson     Json?
+
+  @@unique([entryId, locale])
+  @@unique([typeId, locale, slug])
+  @@map("entry_translations")
+}
+
+model EntryTerm {
+  entryId String @db.Uuid
+  entry   Entry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  termId  String @db.Uuid
+  term    Term   @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, termId])
+  @@index([termId])
+  @@map("entry_terms")
+}
+
+model EntryRevision {
+  id        String   @id @default(uuid()) @db.Uuid
+  entryId   String   @db.Uuid
+  entry     Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  locale    String
+  title     String
+  excerpt   String?
+  content   String   @default("")
+  blocks    Json     @default("[]")
+  authorId  String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([entryId, locale])
+  @@map("entry_revisions")
+}
+
+/// Mẫu giao diện (Theme Builder): dựng trang chi tiết / lưu trữ / header / footer bằng Page Builder
+model ThemeTemplate {
+  id           String                     @id @default(uuid()) @db.Uuid
+  name         String
+  /// single | archive | header | footer | search | not_found
+  kind         String
+  /// áp cho: "*" | page | post | product | post_category | post_tag | product_category | entry:<typeKey> | term:<taxonomyKey>
+  target       String                     @default("*")
+  /// thu hẹp: { ids?: string[] (bản ghi cụ thể), termIds?: string[] (bản ghi thuộc term), excludeIds?: string[] }
+  conditions   Json                       @default("{}")
+  /// cao hơn thắng khi nhiều mẫu cùng khớp
+  priority     Int                        @default(0)
+  isActive     Boolean                    @default(true)
+  /// nguồn: admin | theme | preset:<key>
+  source       String                     @default("admin")
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+  translations ThemeTemplateTranslation[]
+
+  @@index([kind, isActive])
+  @@map("theme_templates")
+}
+
+model ThemeTemplateTranslation {
+  id         String        @id @default(uuid()) @db.Uuid
+  templateId String        @db.Uuid
+  template   ThemeTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  locale     String
+  /// mảng block [{ id, type, data, settings }] — có thể dùng block động (dynamic-*, query-loop)
+  blocks     Json          @default("[]")
+
+  @@unique([templateId, locale])
+  @@map("theme_template_translations")
+}
+
+// ============================================================================
+// Mở rộng hệ thống (giai đoạn 7): API key, khoá chỉnh sửa, wishlist, giỏ hàng
+// lưu máy chủ + giỏ bỏ dở, thuộc tính sản phẩm dùng chung, thuế theo vùng
+// ============================================================================
+
+/// API key (application password) cho tích hợp headless / bên ngoài. Chỉ lưu hash.
+model ApiKey {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  /// 12 ký tự đầu của key (hiển thị để nhận diện), vd "cmsnt_ab12cd"
+  prefix      String
+  /// sha256 của key đầy đủ
+  hash        String    @unique
+  /// quyền của key (tập con quyền của chủ sở hữu); rỗng = mọi quyền chủ sở hữu có
+  permissions String[]  @default([])
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsedAt  DateTime?
+  lastUsedIp  String?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+/// Khoá chỉnh sửa đồng thời (như post lock của WordPress): giữ bằng heartbeat, hết hạn tự nhả
+model EditLock {
+  id        String   @id @default(uuid()) @db.Uuid
+  /// page | post | product | entry | theme_template | global_block ...
+  entity    String
+  entityId  String
+  userId    String   @db.Uuid
+  userName  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([entity, entityId])
+  @@map("edit_locks")
+}
+
+model WishlistItem {
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, productId])
+  @@map("wishlist_items")
+}
+
+/// Giỏ hàng lưu trên máy chủ (đồng bộ giữa thiết bị, nhắc giỏ hàng bỏ dở)
+model Cart {
+  id                 String    @id @default(uuid()) @db.Uuid
+  /// mã giỏ của khách vãng lai (lưu ở trình duyệt)
+  token              String    @unique
+  userId             String?   @db.Uuid
+  user               User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// [{ productId, variantId, quantity }]
+  items              Json      @default("[]")
+  /// email để nhắc giỏ bỏ dở (khách đăng nhập hoặc đã nhập ở checkout)
+  email              String?
+  locale             String?
+  subtotal           Decimal   @default(0) @db.Decimal(15, 2)
+  lastActivityAt     DateTime  @default(now())
+  /// số lần đã gửi email nhắc (0..2)
+  reminderCount      Int       @default(0)
+  lastReminderAt     DateTime?
+  /// mã đơn khi giỏ đã thành đơn (không nhắc nữa)
+  convertedOrderCode String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([lastActivityAt])
+  @@map("carts")
+}
+
+/// Thuộc tính sản phẩm dùng chung (Màu, Size...) — biến thể chọn giá trị từ đây
+model ProductAttribute {
+  id         String   @id @default(uuid()) @db.Uuid
+  /// mã (a-z0-9_), khớp với Product.options[].name
+  key        String   @unique
+  /// { vi, en }
+  name       Json     @default("{}")
+  /// select | color | button | image
+  type       String   @default("select")
+  /// [{ value: "red", label: { vi, en }, color?: "#ff0000", imageId?: string }]
+  values     Json     @default("[]")
+  /// hiện làm bộ lọc ở trang danh sách sản phẩm
+  filterable Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("product_attributes")
+}
+
+/// Thuế theo vùng / lớp thuế (bật bằng commerce.taxMode = "rates")
+model TaxRate {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  /// lớp thuế: standard | reduced | zero | <tuỳ chọn> (Product.taxClass)
+  taxClass  String   @default("standard")
+  /// mã quốc gia ISO ("VN") hoặc "*"
+  country   String   @default("*")
+  /// mã/tên tỉnh thành hoặc "*"
+  province  String   @default("*")
+  /// phần trăm, vd 10.00
+  rate      Decimal  @db.Decimal(6, 3)
+  /// áp cả phí vận chuyển
+  shipping  Boolean  @default(false)
+  priority  Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taxClass, isActive])
+  @@map("tax_rates")
+}
+
+// ============================================================
+// Kho mã số: key bản quyền, tài khoản, acc game, thẻ cào, gift card...
+// ============================================================
+
+enum DigitalCodeStatus {
+  /// còn trong kho, sẵn sàng bán
+  AVAILABLE
+  /// đang giữ cho đơn chưa thanh toán (nhả lại khi đơn huỷ)
+  RESERVED
+  /// đã giao cho khách
+  SOLD
+  /// admin tạm khoá, không bán
+  DISABLED
+  /// đã thu hồi (lỗi, bảo hành đã đổi mã, hoàn tiền...)
+  REVOKED
+}
+
+/// Một mã / tài khoản trong kho. Nội dung luôn mã hoá AES-256-GCM, chỉ giải mã khi giao cho khách hoặc admin bấm xem
+model DigitalCode {
+  id           String            @id @default(uuid()) @db.Uuid
+  productId    String            @db.Uuid
+  product      Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// biến thể (sản phẩm VARIABLE); null = mã của sản phẩm đơn
+  variantId    String?           @db.Uuid
+  variant      ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// nội dung đã mã hoá: v1:<iv>:<tag>:<data>
+  content      String
+  /// sha256 nội dung đã chuẩn hoá — chống nhập trùng trong cùng sản phẩm
+  contentHash  String
+  /// bản che để nhận diện mà không lộ nội dung (vd "abc***@gmail.com | ****")
+  preview      String
+  /// tên lô nhập (để lọc / thống kê)
+  batch        String?
+  /// ghi chú nội bộ
+  note         String?
+  /// giá vốn của riêng mã này (báo cáo lợi nhuận)
+  costPrice    Decimal?          @db.Decimal(15, 2)
+  /// hạn dùng của mã (gift card, thẻ...); mã đã hết hạn không được bán
+  expiresAt    DateTime?
+  status       DigitalCodeStatus @default(AVAILABLE)
+  /// import | manual | api | replacement
+  source       String            @default("import")
+  orderId      String?           @db.Uuid
+  order        Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderItemId  String?           @db.Uuid
+  orderItem    OrderItem?        @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  reservedAt   DateTime?
+  soldAt       DateTime?
+  /// lần đầu khách xem mã
+  viewedAt     DateTime?
+  /// bảo hành: khách báo lỗi
+  reportStatus String?
+  reportNote   String?
+  reportedAt   DateTime?
+  /// phản hồi của admin khi xử lý báo lỗi
+  reportReply  String?
+  revokedAt    DateTime?
+  revokeReason String?
+  /// mã này thay thế cho mã lỗi nào (đổi mã bảo hành)
+  replacesId   String?           @db.Uuid
+  createdById  String?           @db.Uuid
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([productId, contentHash])
+  @@index([productId, variantId, status])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([reportStatus])
+  @@index([batch])
+  @@map("digital_codes")
+}
+
+// ============================================================
+// AI Studio: credits, gói cước, công cụ AI, tác vụ (modules/ai)
+// ============================================================
+
+/// Loại biến động credits
+enum CreditTxnType {
+  /// Mua gói cước (cộng credits của gói)
+  PURCHASE
+  /// Trừ credits khi chạy một tác vụ AI
+  USAGE
+  /// Hoàn credits khi tác vụ lỗi / bị huỷ
+  REFUND
+  /// Tặng credits (đăng ký mới, khuyến mãi)
+  BONUS
+  /// Admin cộng / trừ tay
+  ADJUST
+}
+
+/// Nhật ký biến động số dư do AI Studio (VND, đi kèm một dòng wallet_transactions). `amount` có dấu, `balanceAfter` = số dư ví sau giao dịch.
+model CreditTransaction {
+  id             String          @id @default(uuid()) @db.Uuid
+  userId         String          @db.Uuid
+  user           User            @relation("CreditOwner", fields: [userId], references: [id], onDelete: Cascade)
+  type           CreditTxnType
+  amount         Int
+  balanceAfter   Int
+  note           String?
+  /// Tác vụ AI liên quan (USAGE / REFUND)
+  taskId         String?         @db.Uuid
+  task           AiTask?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  /// Lần mua gói liên quan (PURCHASE)
+  purchaseId     String?         @db.Uuid
+  purchase       CreditPurchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  /// Admin thực hiện (null = hệ thống / khách)
+  createdById    String?         @db.Uuid
+  createdBy      User?           @relation("CreditActor", fields: [createdById], references: [id], onDelete: SetNull)
+  meta           Json            @default("{}")
+  /// Khoá chống trùng — cùng khoá chỉ ghi một lần (vd usage:<taskId>, refund:<taskId>)
+  idempotencyKey String?         @unique
+  createdAt      DateTime        @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([taskId])
+  @@map("credit_transactions")
+}
+
+/// Gói cước credits bán cho khách (Basic, Standard, Pro...). Admin thêm / sửa ở AI Studio › Gói cước.
+model CreditPlan {
+  id           String           @id @default(uuid()) @db.Uuid
+  slug         String           @unique
+  name         String
+  /// Mô tả ngắn dưới giá (vd "99.050 credits / tháng")
+  description  String?
+  /// Giá bán (VND); 0 = gói miễn phí
+  price        Decimal          @default(0) @db.Decimal(15, 2)
+  /// Giá trả một lần cho 12 chu kỳ (gói năm, VND); 0 = không bán theo năm
+  yearlyPrice  Decimal          @default(0) @db.Decimal(15, 2)
+  /// Số tiền (VND) cộng vào ví mỗi lần mua gói
+  credits      Int              @default(0)
+  /// Thời hạn gói (ngày) — hết hạn thì quay về số luồng mặc định
+  durationDays Int              @default(30)
+  /// Số tác vụ AI được chạy cùng lúc khi đang dùng gói
+  concurrency  Int              @default(2)
+  /// Danh sách quyền lợi hiển thị trên bảng giá
+  features     String[]         @default([])
+  /// Nhãn nổi bật (vd "Phổ biến", "Giá trị nhất")
+  badge        String?
+  /// Làm nổi bật thẻ gói trên bảng giá
+  highlight    Boolean          @default(false)
+  /// Ẩn khỏi bảng giá nhưng vẫn giữ lịch sử
+  active       Boolean          @default(true)
+  sortOrder    Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  users        User[]
+  purchases    CreditPurchase[]
+
+  @@index([active, sortOrder])
+  @@map("credit_plans")
+}
+
+/// Một lần khách mua gói cước (trả bằng số dư ví)
+model CreditPurchase {
+  id          String              @id @default(uuid()) @db.Uuid
+  /// Mã hiển thị (#123)
+  code        Int                 @unique @default(autoincrement())
+  userId      String              @db.Uuid
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId      String?             @db.Uuid
+  plan        CreditPlan?         @relation(fields: [planId], references: [id], onDelete: SetNull)
+  /// Lưu lại tên gói / giá niêm yết lúc mua để đối soát khi gói đổi
+  planName    String
+  listPrice   Decimal             @db.Decimal(15, 2)
+  /// Giảm giá (%) đã áp dụng: chiết khấu nâng cấp gói / giảm giá riêng
+  discount    Decimal             @default(0) @db.Decimal(5, 2)
+  /// Số tiền thực trừ ví
+  paid        Decimal             @db.Decimal(15, 2)
+  credits     Int
+  /// Hạn gói sau lần mua này
+  expiresAt   DateTime?
+  /// Chu kỳ thanh toán: month = 1 chu kỳ, year = trả một lần cho 12 chu kỳ
+  cycle       String              @default("month")
+  /// Gói năm: số lần cộng credits còn lại, thời điểm cộng kế tiếp, khoảng cách giữa hai lần (ngày, chốt lúc mua)
+  refillsLeft Int                 @default(0)
+  nextRefillAt DateTime?
+  refillDays  Int                 @default(0)
+  walletTxnId String?             @db.Uuid
+  createdAt   DateTime            @default(now())
+  creditTxns  CreditTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([refillsLeft, nextRefillAt])
+  @@map("credit_purchases")
+}
+
+/**
+ * Công cụ AI hiển thị cho khách. Định nghĩa form + cách gọi API nằm trong mã nguồn (adapter của nhà cung cấp,
+ * modules/ai/providers); bảng này chỉ lưu phần admin chỉnh được: tên, mô tả, giá credits, bật/tắt, thứ tự.
+ * Khi khởi động, API tự thêm dòng cho công cụ mới khai báo trong adapter.
+ */
+model AiTool {
+  /// Khoá duy nhất `<provider>.<tool>` (vd sangtao.chatgpt-image)
+  key         String   @id
+  provider    String
+  /// Nhóm hiển thị trên menu (voice, video, image, audio...)
+  category    String
+  name        String
+  description String?
+  /// Tên icon lucide
+  icon        String?
+  /// Nhãn nhỏ (NEW, HOT...)
+  badge       String?
+  enabled     Boolean  @default(true)
+  /// Hiện ở mục "Khám phá" trên dashboard
+  featured    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  /// Giá credits: { base, perUnit } — tổng = base + perUnit × số đơn vị (ký tự, giây, ảnh… do adapter tính)
+  pricing     Json     @default("{}")
+  /// Tuỳ chỉnh thêm của admin cho công cụ (vd model mặc định)
+  options     Json     @default("{}")
+  /// Các nhóm model: các công cụ cùng tên nhóm gộp thành 1 công cụ trên website, khách chọn model trong nhóm.
+  /// Một công cụ có thể nằm trong nhiều nhóm (mảng rỗng = đứng riêng)
+  modelGroups String[] @default([])
+  /// Tên model hiện trong ô chọn model của nhóm (bỏ trống = tên công cụ)
+  modelLabel  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       AiTask[]
+
+  @@index([enabled, category, sortOrder])
+  @@map("ai_tools")
+}
+
+enum AiTaskStatus {
+  /// Đã trừ credits, chờ gửi sang nhà cung cấp
+  PENDING
+  /// Nhà cung cấp đang xử lý (đang hỏi trạng thái định kỳ)
+  PROCESSING
+  SUCCEEDED
+  /// Lỗi — đã hoàn credits
+  FAILED
+  /// Khách / admin huỷ — đã hoàn credits
+  CANCELLED
+}
+
+/// Một lần khách chạy công cụ AI
+model AiTask {
+  id             String              @id @default(uuid()) @db.Uuid
+  /// Mã hiển thị ngắn (vd T8K2M4Q)
+  code           String              @unique
+  userId         String              @db.Uuid
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolKey        String
+  tool           AiTool              @relation(fields: [toolKey], references: [key], onUpdate: Cascade)
+  provider       String
+  status         AiTaskStatus        @default(PENDING)
+  /// Dữ liệu khách nhập (đã kiểm tra theo form của công cụ)
+  input          Json                @default("{}")
+  /// Kết quả: { files: [{ url, type, name }], text?, ... }
+  output         Json                @default("{}")
+  /// Mã tác vụ phía nhà cung cấp
+  providerTaskId String?
+  /// Phản hồi thô gần nhất của nhà cung cấp (để admin tra lỗi)
+  providerData   Json?
+  /// Số tiền (VND) đã trừ cho tác vụ
+  credits        Int                 @default(0)
+  refunded       Boolean             @default(false)
+  /// Tiến độ 0–100 (nếu nhà cung cấp trả)
+  progress       Int                 @default(0)
+  error          String?
+  /// Số lần đã hỏi trạng thái và lần hỏi tiếp theo
+  pollCount      Int                 @default(0)
+  nextPollAt     DateTime?
+  /// Tác vụ tạo qua API key của khách (API & Developers)
+  viaApi         Boolean             @default(false)
+  /// Hiển thị công khai (trang cộng đồng, người khác xem / dùng lại thiết kế); mặc định riêng tư
+  isPublic       Boolean             @default(false)
+  /// Quản trị viên đã ẩn khỏi trang Cộng đồng (khách không tự bật Công khai lại được)
+  publicBlocked  Boolean             @default(false)
+  ip             String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  creditTxns     CreditTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([status, nextPollAt])
+  @@index([toolKey, createdAt])
+  @@index([isPublic, createdAt])
+  @@map("ai_tasks")
+}
+
+// ============================================================
+// Tiếp thị liên kết (modules/affiliate)
+// ============================================================
+
+/// Loại biến động ví hoa hồng giới thiệu
+enum AffiliateTxnType {
+  /// Hoa hồng từ một lần nạp tiền của người được giới thiệu
+  COMMISSION
+  /// Thu hồi hoa hồng (admin rút lại tiền nạp của người được giới thiệu)
+  REVOKE
+  /// Trừ khi khách gửi yêu cầu rút (giữ tiền chờ duyệt)
+  PAYOUT
+  /// Trả lại khi yêu cầu rút bị từ chối / khách huỷ
+  PAYOUT_REFUND
+  /// Admin cộng / trừ tay
+  ADJUST
+}
+
+/// Sổ cái ví hoa hồng (users.affiliateBalance). `amount` có dấu, `balanceAfter` = số dư hoa hồng sau giao dịch.
+model AffiliateTransaction {
+  id             String           @id @default(uuid()) @db.Uuid
+  /// Chủ ví hoa hồng (người giới thiệu)
+  userId         String           @db.Uuid
+  user           User             @relation("AffiliateOwner", fields: [userId], references: [id], onDelete: Cascade)
+  type           AffiliateTxnType
+  amount         Decimal          @db.Decimal(15, 2)
+  balanceAfter   Decimal          @db.Decimal(15, 2)
+  /// Người được giới thiệu sinh ra hoa hồng / bị rút lại tiền nạp
+  fromUserId     String?          @db.Uuid
+  fromUser       User?            @relation("AffiliateSource", fields: [fromUserId], references: [id], onDelete: SetNull)
+  /// Giao dịch ví liên quan: nạp tiền (COMMISSION) hoặc trừ tiền rút lại (REVOKE)
+  sourceTxnId    String?          @db.Uuid
+  payoutId       String?          @db.Uuid
+  payout         AffiliatePayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  note           String?
+  meta           Json             @default("{}")
+  /// Khoá chống trùng (vd aff:<id giao dịch nạp>) — event bắn lại không ghi hai lần
+  idempotencyKey String?          @unique
+  /// Admin thao tác (null = hệ thống / khách)
+  createdById    String?          @db.Uuid
+  createdBy      User?            @relation("AffiliateActor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@index([fromUserId])
+  @@index([type, createdAt])
+  @@map("affiliate_transactions")
+}
+
+/// Cách nhận tiền khi rút hoa hồng
+enum AffiliatePayoutMethod {
+  /// Chuyển vào số dư ví để mua gói
+  WALLET
+  /// Chuyển khoản ngân hàng (admin chuyển tay rồi duyệt)
+  BANK
+}
+
+enum AffiliatePayoutStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// Yêu cầu rút hoa hồng. Tạo yêu cầu thì trừ ngay ví hoa hồng (PAYOUT); từ chối / huỷ thì trả lại (PAYOUT_REFUND).
+model AffiliatePayout {
+  id            String                 @id @default(uuid()) @db.Uuid
+  /// Mã hiển thị (#123)
+  code          Int                    @unique @default(autoincrement())
+  userId        String                 @db.Uuid
+  user          User                   @relation("AffiliatePayoutOwner", fields: [userId], references: [id], onDelete: Cascade)
+  amount        Decimal                @db.Decimal(15, 2)
+  method        AffiliatePayoutMethod
+  status        AffiliatePayoutStatus  @default(PENDING)
+  bankName      String?
+  bankAccount   String?
+  bankHolder    String?
+  /// Ghi chú của khách
+  note          String?
+  /// Ghi chú của admin khi duyệt / từ chối (khách nhìn thấy)
+  adminNote     String?
+  processedById String?                @db.Uuid
+  processedBy   User?                  @relation("AffiliatePayoutActor", fields: [processedById], references: [id], onDelete: SetNull)
+  processedAt   DateTime?
+  /// Giao dịch ví khi duyệt rút vào số dư ví
+  walletTxnId   String?                @db.Uuid
+  transactions  AffiliateTransaction[]
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("affiliate_payouts")
+}
+
+/// Bảng tin: thông báo admin tự viết (cập nhật mới của web...), hiện ở trang Tổng quan của khách kèm ngày giờ đăng.
+/// Admin thêm / sửa / xoá ở AI Studio › Bảng tin (quyền announcements.manage).
+model Announcement {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Tiêu đề ngắn (tuỳ chọn)
+  title       String?
+  /// Nội dung thông báo (văn bản thường, giữ xuống dòng)
+  content     String
+  /// Ghim lên đầu bảng tin
+  pinned      Boolean  @default(false)
+  /// Ẩn khỏi trang khách nhưng vẫn giữ ở admin
+  active      Boolean  @default(true)
+  createdById String?  @db.Uuid
+  createdBy   User?    @relation("AnnouncementAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([active, pinned, createdAt])
+  @@map("announcements")
+}

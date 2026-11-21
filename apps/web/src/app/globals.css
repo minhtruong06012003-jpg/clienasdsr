@@ -1,0 +1,519 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* hiệu ứng riêng của trang chủ (lưới phối cảnh, aurora, marquee, reveal...) */
+@import "./landing.css";
+@plugin "@tailwindcss/typography";
+
+/* Quét class của thư viện block dùng chung (trang CMS /p/[slug] render bằng @cmsnt/blocks) */
+@source "../../../../packages/blocks/src";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* Màu thương hiệu cho block CMS (BlockRenderer đọc --cms-brand...) */
+  --color-brand: var(--cms-brand, var(--primary));
+  --color-brand-secondary: var(--cms-secondary, #0f172a);
+  --color-brand-accent: var(--cms-accent, #f59e0b);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--site-font-sans, "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-success: var(--success);
+  /* nút hành động chính (ĐẶT HÀNG) — bảng phối màu có thể ghi đè */
+  --color-action: var(--action);
+  --color-action-foreground: var(--action-foreground);
+  --color-info: var(--info);
+  --color-primary-soft: var(--primary-soft);
+  --color-success-soft: var(--success-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-info-soft: var(--info-soft);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-border-strong: var(--border-strong);
+  --font-handwritten: var(--font-handwritten-face), "Segoe Print", "Bradley Hand", cursive;
+  --color-warning: var(--warning);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/*
+ * Bảng màu mặc định "Trắng đen" (kiểu YupVox): nền trắng ngà, thẻ trắng, chữ / nút / mục đang chọn màu đen;
+ * chế độ tối đảo lại (nền đen, nút trắng chữ đen). Màu chỉ còn ở trạng thái (thành công / lỗi / cảnh báo).
+ * Các cặp chữ / nền đều đạt tương phản WCAG AA (>= 4.5:1). Giữ khớp PRESET_PALETTES[0] + DEFAULT_STATUS trong lib/palette.ts.
+ */
+:root {
+  color-scheme: light;
+  --site-font-sans: "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif;
+  --font-sans: var(--site-font-sans);
+  --background: #f7f7f8;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --secondary: #f2f2f3;
+  --secondary-foreground: #0a0a0a;
+  /* nền ô nhập / hộp phụ */
+  --muted: #f2f2f3;
+  --muted-foreground: #6b6b70;
+  /* chữ phụ đậm hơn muted */
+  --subtle-foreground: #46464b;
+  --accent: #f2f2f3;
+  --accent-foreground: #111111;
+  --destructive: #c81e3a;
+  /* nút hành động chính (ĐẶT HÀNG, ô thành tiền): cùng tông màu chủ đạo cho đồng bộ */
+  --action: #111111;
+  --action-foreground: #ffffff;
+  --success: #047857;
+  --warning: #a14a05;
+  --info: #0369a1;
+  /* nền nhạt cho thẻ báo trạng thái */
+  --primary-soft: #f0f0f1;
+  --success-soft: #e3f6ee;
+  --warning-soft: #fdf1dc;
+  --danger-soft: #fde8eb;
+  --info-soft: #e4f3fb;
+  --border: #e7e7e9;
+  --border-strong: #d4d4d8;
+  --input: #e7e7e9;
+  --ring: rgb(17 17 17 / 25%);
+  /* màu thứ hai của dải gradient thương hiệu (bảng phối màu có thể ghi đè) */
+  --brand-2: #52525b;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #46464b;
+  --sidebar-primary: #111111;
+  --sidebar-primary-foreground: #ffffff;
+  /* mục đang chọn + thẻ người dùng ở sidebar: nền xanh nhạt, chữ xanh đậm (cùng tông màu chủ đạo) */
+  --sidebar-accent: #f2f2f3;
+  --sidebar-accent-foreground: #111111;
+  --sidebar-border: #e7e7e9;
+  --sidebar-ring: rgb(17 17 17 / 25%);
+}
+
+/* Chế độ tối: đen nhiều lớp (nền sâu -> sidebar -> thẻ -> ô nhập), viền trắng mờ, chữ phụ xám ấm.
+   Các lớp chênh nhau rất ít để giao diện "có chiều sâu" mà vẫn đúng 2 tông trắng / đen. */
+.dark {
+  color-scheme: dark;
+  --background: #070708;
+  --foreground: #f4f4f5;
+  --card: #0f0f11;
+  --card-foreground: #f4f4f5;
+  --popover: #141416;
+  --popover-foreground: #f4f4f5;
+  --primary: #fafafa;
+  --primary-foreground: #0a0a0a;
+  --secondary: #18181b;
+  --secondary-foreground: #f4f4f5;
+  --muted: #17171a;
+  --muted-foreground: #9b9ba3;
+  --subtle-foreground: #c4c4cc;
+  --accent: #1c1c20;
+  --accent-foreground: #fafafa;
+  --destructive: #f87171;
+  --action: #fafafa;
+  --action-foreground: #0a0a0a;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --info: #38bdf8;
+  --primary-soft: rgb(255 255 255 / 8%);
+  --success-soft: rgb(52 211 153 / 12%);
+  --warning-soft: rgb(251 191 36 / 12%);
+  --danger-soft: rgb(248 113 113 / 12%);
+  --info-soft: rgb(56 189 248 / 12%);
+  --border: #1e1e22;
+  --border-strong: #2e2e34;
+  --input: #26262b;
+  --ring: rgb(250 250 250 / 28%);
+  --brand-2: #d4d4d8;
+  --sidebar: #0a0a0b;
+  --sidebar-foreground: #c4c4cc;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #17171a;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #1a1a1e;
+  --sidebar-ring: rgb(250 250 250 / 28%);
+  scrollbar-color: #2a2a30 transparent;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    line-height: 1.55;
+  }
+  html {
+    @apply font-sans scroll-smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* Luôn chừa chỗ cho thanh cuộn dọc: trang dài (có thanh cuộn) và trang ngắn
+       (không có) sẽ cùng bề rộng, tránh bố cục căn giữa bị lệch khi chuyển trang. */
+    scrollbar-gutter: stable;
+  }
+  /* Radix (react-remove-scroll) khoá cuộn khi mở dropdown/dialog bằng cách cộng
+     margin-right = bề rộng thanh cuộn vào body. Vì html đã luôn chừa chỗ thanh cuộn
+     (scrollbar-gutter: stable) nên lề này bị thừa, làm bố cục nhảy sang trái → bỏ đi. */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* Nền gradient của hero / CTA */
+  .bg-hero {
+    background:
+      radial-gradient(60rem 30rem at 10% -10%, color-mix(in oklab, var(--primary) 35%, transparent), transparent 60%),
+      radial-gradient(50rem 30rem at 100% 0%, color-mix(in oklab, var(--brand-2) 30%, transparent), transparent 60%),
+      radial-gradient(40rem 20rem at 50% 110%, color-mix(in oklab, var(--brand-2) 20%, transparent), transparent 60%);
+  }
+  /* Chữ gradient cho tiêu đề nổi bật */
+  .text-gradient {
+    background-image: linear-gradient(90deg, var(--primary), color-mix(in oklab, var(--primary), var(--brand-2)), var(--brand-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  /* Nền lưới mờ trang trí */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, var(--foreground) 6%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, var(--foreground) 6%, transparent) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+  /* Nền khu thành viên: xám xanh rất nhạt, phẳng (giống mẫu) để các thẻ trắng nổi lên */
+  .bg-app {
+    background-color: var(--background);
+  }
+  /* Chế độ tối: một vệt sáng rất mờ trên đỉnh trang + lưới chấm mờ dần -> nền không bị "đen phẳng" */
+  .dark .bg-app {
+    background-image:
+      radial-gradient(70rem 28rem at 50% -12rem, rgb(255 255 255 / 0.055), transparent 70%),
+      radial-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      22px 22px;
+    background-attachment: fixed;
+  }
+  /* Ẩn thanh cuộn của hàng chip / tab cuộn ngang (vẫn cuộn được bằng tay / chuột) */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Mờ dần mép phải hàng cuộn ngang để người dùng biết còn mục phía sau */
+  .fade-x {
+    mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+  }
+  /* Thẻ ví: gradient theo màu chủ đạo của bảng phối màu + hoạ tiết vòng tròn mờ */
+  .bg-wallet {
+    background:
+      radial-gradient(14rem 14rem at 105% -20%, oklch(1 0 0 / 0.18), transparent 60%),
+      radial-gradient(10rem 10rem at -10% 120%, oklch(1 0 0 / 0.12), transparent 60%),
+      linear-gradient(135deg, color-mix(in oklab, var(--primary) 82%, black), var(--primary) 60%, var(--brand-2));
+  }
+  /* Nút "Tạo mới" ở sidebar (chế độ sáng): nút đen chữ trắng; chế độ tối xem phần cuối file */
+  .btn-create {
+    background-color: #111111;
+    color: #ffffff;
+  }
+  /* Gradient thương hiệu cho nút / thẻ nổi bật */
+  .bg-brand-gradient {
+    background-image: linear-gradient(135deg, var(--primary), var(--brand-2));
+  }
+}
+
+/* Hiệu ứng trôi nhẹ cho icon nền tảng ở hero */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-float {
+    animation: none;
+  }
+}
+
+/* Trang đăng nhập / đăng ký: luôn tông sáng trắng / đen (không đổi theo chế độ tối / bảng phối màu) */
+.auth-scope {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --primary-soft: #f0f0f1;
+  --brand-2: #52525b;
+  --muted: #f4f4f5;
+  --muted-foreground: #6b6b70;
+  --accent: #f2f2f3;
+  --accent-foreground: #111111;
+  --border: #e7e7e9;
+  --input: #e4e4e7;
+  --ring: rgb(17 17 17 / 25%);
+  --destructive: #e5484d;
+  color: var(--foreground);
+}
+/* Đốm tròn mờ trang trí nền trang tài khoản */
+.auth-blob {
+  position: absolute;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 30% 30%, #f4f4f5, #e4e4e7 70%);
+  pointer-events: none;
+}
+
+/* Dropdown Select (Radix): Radix tự chèn style ẩn thanh cuộn của viewport, chỉ để nút mũi tên lên/xuống.
+   Hiện lại thanh cuộn mảnh để người dùng thấy danh sách còn dài và kéo lên xuống được.
+   Để ngoài @layer và tăng độ ưu tiên selector để thắng style Radix chèn vào. */
+[data-slot="select-content"] [data-radix-select-viewport] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+}
+[data-slot="select-content"] [data-radix-select-viewport]::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+[data-slot="select-content"] [data-radix-select-viewport]::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+}
+[data-slot="select-content"] [data-radix-select-viewport]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Dropdown ListboxSelect (Headless UI): luôn hiện thanh cuộn mảnh để người dùng thấy danh sách còn dài và kéo lên xuống được */
+.listbox-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+}
+.listbox-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.listbox-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+}
+.listbox-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------- AI Studio: tiện ích giao diện khu thành viên ---------------- */
+
+/* Nền chấm của khung xem kết quả (canvas) — đổi màu chấm theo sáng / tối */
+.studio-dots {
+  background-color: var(--card);
+  background-image: radial-gradient(color-mix(in oklab, var(--foreground) 11%, transparent) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Nền khối hero (ô nhập prompt, bảng giá): vài vệt xám rất mờ trên nền thẻ — giữ đúng 2 tông trắng / đen */
+.studio-mesh {
+  background:
+    radial-gradient(60% 80% at 0% 0%, color-mix(in oklab, var(--foreground) 6%, transparent), transparent 60%),
+    radial-gradient(50% 70% at 100% 0%, color-mix(in oklab, var(--foreground) 4%, transparent), transparent 60%),
+    var(--card);
+}
+
+/* Viền đậm cho ô nhập prompt: nền thật ở lớp trong, viền là lớp ngoài (đen -> xám, chế độ tối: trắng -> xám) */
+.studio-ring {
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    linear-gradient(120deg, var(--foreground), color-mix(in oklab, var(--foreground) 35%, transparent)) border-box;
+  border: 1.5px solid transparent;
+}
+
+/* Hiệu ứng "AI đang tạo": dải sáng chạy ngang trên khung chờ */
+@keyframes studio-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.studio-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.studio-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--foreground) 7%, transparent), transparent);
+  animation: studio-shimmer 1.8s ease-in-out infinite;
+}
+
+/* Sóng âm giả lập cho thẻ âm thanh (thumbnail lịch sử) */
+@keyframes studio-wave {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.studio-wave > span {
+  transform-origin: center;
+  animation: studio-wave 1.2s ease-in-out infinite;
+  /* đứng yên, chỉ "nhảy" khi rê chuột vào thẻ (đỡ rối mắt khi lưới có nhiều thẻ âm thanh) */
+  animation-play-state: paused;
+}
+.group:hover .studio-wave > span {
+  animation-play-state: running;
+}
+
+/* Thanh cuộn ngang mảnh cho dải tác phẩm gần đây */
+.studio-scroll {
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-shimmer::after,
+  .studio-wave > span {
+    animation: none;
+  }
+}
+
+/* ---------------- Chế độ tối: hoàn thiện bề mặt (chỉ áp khi .dark) ---------------- */
+
+/* Thẻ: viền sáng mảnh ở mép trên (như ánh đèn chiếu xuống) — gắn vào biến inset của Tailwind
+   nên chỉ cộng thêm vào bóng sẵn có (shadow-xs, shadow-xl...), không đè mất bóng của thẻ */
+.dark .bg-card {
+  --tw-inset-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.045);
+}
+/* Thẻ có viền: phủ thêm dải sáng rất nhẹ từ trên xuống để tách khỏi nền */
+.dark .bg-card.border,
+.dark .bg-card.border-2 {
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 0.022), transparent 45%);
+}
+
+/* Nút trắng (nút chính) ở chế độ tối: trắng -> xám bạc + viền sáng trong, nhìn "kim loại" thay vì trắng phẳng chói mắt */
+.dark .bg-foreground.text-background,
+.dark [data-slot="button"][data-variant="default"] {
+  background-image: linear-gradient(180deg, #ffffff 0%, #dcdce0 100%);
+}
+/* bóng chỉ áp khi không focus bằng bàn phím, để vòng focus (cũng là box-shadow) vẫn hiện */
+.dark .bg-foreground.text-background:not(:focus-visible),
+.dark [data-slot="button"][data-variant="default"]:not(:focus-visible) {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    inset 0 -1px 0 rgb(0 0 0 / 0.12),
+    0 1px 2px rgb(0 0 0 / 0.5),
+    0 6px 18px -8px rgb(255 255 255 / 0.18);
+}
+
+/* Bôi đen chữ */
+.dark ::selection {
+  background: rgb(255 255 255 / 0.18);
+}
+
+/* Thẻ số dư (VND) ở sidebar: nền đen sâu + quầng sáng góc phải, nổi bật như "thẻ thành viên" */
+.credit-card {
+  background: var(--muted);
+}
+.dark .credit-card {
+  background:
+    radial-gradient(12rem 8rem at 110% -20%, rgb(255 255 255 / 0.09), transparent 70%),
+    linear-gradient(160deg, #18181b, #0b0b0d 70%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+/* Nút "Tạo mới" chế độ tối: nền đen kính + viền bạc có vệt sáng chạy vòng quanh (góc xoay là biến --create-angle) */
+@property --create-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes create-spin {
+  to {
+    --create-angle: 360deg;
+  }
+}
+.dark .btn-create {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(180deg, #1a1a1d, #0f0f11) padding-box,
+    conic-gradient(from var(--create-angle), rgb(255 255 255 / 0.12) 0deg, rgb(255 255 255 / 0.9) 50deg, rgb(255 255 255 / 0.12) 110deg, rgb(255 255 255 / 0.12) 360deg) border-box;
+  color: #fafafa;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 10px 30px -12px rgb(255 255 255 / 0.22);
+  animation: create-spin 5s linear infinite;
+}
+.dark .btn-create:hover {
+  background:
+    linear-gradient(180deg, #202024, #131315) padding-box,
+    conic-gradient(from var(--create-angle), rgb(255 255 255 / 0.2) 0deg, #ffffff 50deg, rgb(255 255 255 / 0.2) 110deg, rgb(255 255 255 / 0.2) 360deg) border-box;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dark .btn-create {
+    animation: none;
+  }
+}
+
+/* Trang nội dung CMS (/p/[slug]) dễ đọc sắc nét ở chế độ tối */
+.dark .prose {
+  --tw-prose-body: #d4d4d8;
+  --tw-prose-headings: #fafafa;
+  --tw-prose-lead: #a1a1aa;
+  --tw-prose-links: #fafafa;
+  --tw-prose-bold: #fafafa;
+  --tw-prose-counters: #a1a1aa;
+  --tw-prose-bullets: #71717a;
+  --tw-prose-hr: #27272a;
+}

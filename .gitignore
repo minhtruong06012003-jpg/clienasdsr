@@ -1,0 +1,31 @@
+node_modules
+dist
+.next
+out
+coverage
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep
+apps/api/src/generated
+next-env.d.ts
+.turbo
+backups/*
+!backups/.gitkeep
+apps/api/backups/
+# Nhật ký lỗi (modules/logs) — dữ liệu riêng của từng máy chủ
+apps/api/logs/
+# Dữ liệu của nền tảng plugin đã bỏ (04/10/2026): giữ ignore để không lỡ commit file cũ còn sót trên máy
+apps/api/plugins/
+dist-plugins
+# Gói cài đặt (scripts/package-release.sh)
+release/
+dist-staging
+dist-previous
+.next-staging
+.next-previous
+apps/api/tsconfig.build.generated.json

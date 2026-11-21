@@ -1,0 +1,28 @@
+{
+  "name": "novai",
+  "version": "1.3.0",
+  "private": true,
+  "description": "nov.ai.vn - Website dịch vụ AI bán theo gói credits (fork CMSNT Panel)",
+  "scripts": {
+    "setup": "pnpm install && pnpm db:up && pnpm build:packages && pnpm db:generate && pnpm db:deploy && pnpm db:seed",
+    "dev": "pnpm build:packages && pnpm -r --parallel --filter \"./apps/*\" dev",
+    "dev:api": "pnpm --filter api dev",
+    "dev:admin": "pnpm --filter admin dev",
+    "build": "pnpm build:core",
+    "build:packages": "pnpm --filter @cmsnt/shared build",
+    "build:core": "pnpm build:packages && pnpm --filter api build && pnpm --filter admin build",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck",
+    "test": "pnpm --filter api test",
+    "db:up": "docker compose up -d postgres",
+    "db:generate": "pnpm --filter api prisma:generate",
+    "db:deploy": "pnpm --filter api prisma:deploy",
+    "db:seed": "pnpm --filter api prisma:seed",
+    "db:backup": "node scripts/db-backup.mjs",
+    "release:pack": "./scripts/package-release.sh",
+    "deploy:vps": "bash scripts/deploy.sh"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

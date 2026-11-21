@@ -1,0 +1,78 @@
+# Triển khai production mẫu: docker compose -f docker-compose.prod.yml up -d --build
+# Nhớ đổi mật khẩu DB, JWT secret và domain trong file .env.production
+# Chỉ gồm PostgreSQL + API headless + Admin Panel; frontend của khách (nếu có) triển khai riêng
+# và gọi API public. Reverse proxy (nginx/caddy) đặt bên ngoài compose:
+#   /api/, /uploads/ -> api:4317 · /admin -> admin:3317 · "/" chuyển hướng (302) về /admin
+# Admin build với basePath /admin (ADMIN_BASE_PATH); đặt rỗng nếu muốn admin ở subdomain riêng.
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cmsnt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Cần đặt POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-novai}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cmsnt}"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    restart: unless-stopped
+    # Chờ tối đa 25s khi dừng container để job nền và email đang gửi kịp xong (API tự chờ ~20s)
+    stop_grace_period: 25s
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      PORT: 4317
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cmsnt}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-novai}?schema=public
+      API_PUBLIC_URL: ${API_PUBLIC_URL:?Ví dụ https://api.shop.com}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Cần đặt JWT_ACCESS_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Ví dụ https://panel.shop.com,https://shop.com}
+      # Tuỳ chọn: URL công khai của frontend riêng (link email, URL trả về sau thanh toán,
+      # đích gọi webhook revalidate). Để trống nếu chưa có frontend.
+      WEB_URL: ${SITE_URL:-}
+      ADMIN_URL: ${ADMIN_URL:?Ví dụ https://panel.shop.com/admin}
+      # Tuỳ chọn: secret dùng chung với frontend riêng (revalidate cache, gửi log lỗi)
+      REVALIDATE_SECRET: ${REVALIDATE_SECRET:-}
+      # API nằm sau 1 reverse proxy (nginx/caddy) -> tin X-Forwarded-For của 1 hop
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Sao lưu DB từ admin (image đã có pg_dump/psql) -> file trong volume backups
+      BACKUP_DIR: /app/backups
+      # Lưu trữ media: local | s3 (điền S3_* trong .env.production khi dùng S3/R2)
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-auto}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-1}
+    volumes:
+      - uploads:/app/uploads
+      - backups:/app/backups
+    ports:
+      - "4317:4317"
+
+  admin:
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+      args:
+        API_URL: http://api:4317
+        # Tuỳ chọn: domain frontend riêng cho nút "Xem trên website" (để trống nếu chưa có)
+        NEXT_PUBLIC_WEB_URL: ${SITE_URL:-}
+        NEXT_PUBLIC_ADMIN_BASE_PATH: ${ADMIN_BASE_PATH-/admin}
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "3317:3317"
+
+volumes:
+  pgdata:
+  uploads:
+  backups:
